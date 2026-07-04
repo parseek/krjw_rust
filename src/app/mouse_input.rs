@@ -61,9 +61,9 @@ impl MouseInput {
     pub fn window_event(&mut self, event: &winit::event::WindowEvent) {
         match event {
             winit::event::WindowEvent::CursorMoved { position, .. } => {
-                // Fun fact: If you move the mouse from inside the window to outside the window, you will not get a CursorMoved event, 
-                //     but if you do so while you are holding down a mouse button, you will get a CursorMoved event. This is because 
-                //     the OS sends mouse move events to the window that has captured the mouse, which is usually the window that has 
+                // Fun fact: If you move the mouse from inside the window to outside the window, you will not get a CursorMoved event,
+                //     but if you do so while you are holding down a mouse button, you will get a CursorMoved event. This is because
+                //     the OS sends mouse move events to the window that has captured the mouse, which is usually the window that has
                 //     the mouse button pressed.
                 self.mouse_position = (position.x, position.y);
             }
