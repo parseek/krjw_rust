@@ -1,4 +1,3 @@
-use std::time;
 use winit::event::WindowEvent;
 use winit::keyboard::KeyCode;
 use winit::{application::ApplicationHandler, window::WindowAttributes};
@@ -13,6 +12,7 @@ mod mouse_input;
 mod timer;
 mod graphic;
 
+#[derive(Default)]
 pub struct App {
     window: Option<winit::window::Window>,
 
@@ -29,26 +29,9 @@ pub struct App {
 
     frame_counter: u64,
 
-    // Used to calculate the delta time.
-    frame_stamp: time::Instant,
+    timer : timer::Timer,
 
     u: User,
-}
-
-impl Default for App {
-    fn default() -> Self {
-        Self {
-            frame_stamp: time::Instant::now(),
-            window_pos: Default::default(),
-            window_size: Default::default(),
-            frame_counter: 0,
-            window: None,
-            keyboard_input: Default::default(),
-            mouse_input: Default::default(),
-            graphic_mod: Default::default(),
-            u: Default::default(),
-        }
-    }
 }
 
 #[derive(Default)]
@@ -70,9 +53,7 @@ impl App {
         let this = &mut self.u;
 
         // Get Delta Time
-        let instant_now = time::Instant::now();
-        let delta_time: f64 = (instant_now - self.frame_stamp).as_secs_f64();
-        self.frame_stamp = instant_now;
+        let delta_time = self.timer.pre_frame_and_get_delta_time();
 
         // Process
         if self
@@ -91,7 +72,7 @@ impl App {
         }
 
         // Window
-        window.set_title(format!("KrisuRJW - dTime: {}", delta_time).as_str());
+        window.set_title(format!("KrisuRJW - FPS: {:.2} dTime: {}", self.timer.get_fps(), delta_time).as_str());
 
         // Render
         self.graphic_mod
@@ -117,6 +98,7 @@ impl App {
         self.graphic_mod
             .present()
             .unwrap_or_else(|e| panic!("Failed to Present. Info: {}", e));
+        self.timer.post_frame_fpsc();
     }
 }
 
@@ -134,6 +116,13 @@ impl ApplicationHandler for App {
         self.graphic_mod = D3D11::init_on_window(self.window.as_ref().unwrap());
 
         self.on_init(event_loop);
+    }
+    fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        // Request redraw every iteration of the event loop to keep continuous rendering alive,
+        // even after Windows modal loops (e.g., system menu from title bar right-click) end.
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
     }
     fn window_event(
         &mut self,
@@ -164,7 +153,9 @@ impl ApplicationHandler for App {
                 self.mouse_input.end_frame();
 
                 self.frame_counter += 1;
-                self.window.as_ref().unwrap().request_redraw();
+                if let Some(window) = self.window.as_ref() {
+                    window.request_redraw();
+                }
             }
             _ => {}
         }
