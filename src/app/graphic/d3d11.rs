@@ -112,6 +112,7 @@ impl D3D11 {
         let mut imm_context = None;
         let mut feature_level = D3D_FEATURE_LEVEL(0);
 
+        #[allow(unused)]
         let creation_flag = D3D11_CREATE_DEVICE_FLAG(0);
         #[cfg(debug_assertions)]
         let creation_flag = D3D11_CREATE_DEVICE_DEBUG;
@@ -152,7 +153,7 @@ impl D3D11 {
             dxgi_factory
                 .MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER)
                 .unwrap_or_else(|e| {
-                    panic!("Failed to change DXGI Window Association.");
+                    panic!("Failed to change DXGI Window Association. Info: {:?}", e);
                 });
         }
 

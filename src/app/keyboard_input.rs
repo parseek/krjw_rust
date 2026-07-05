@@ -10,9 +10,11 @@ pub struct KeyboardInput {
 }
 
 impl KeyboardInput {
+    #[allow(unused)]
     pub fn get_key_state(&self, key_code: winit::keyboard::KeyCode) -> KeyState {
         *self.key_map.get(&key_code).unwrap_or(&KEY_STATE_RELEASED)
     }
+    #[allow(unused)]
     pub fn get_keys_iter(&self) -> impl Iterator<Item = (winit::keyboard::KeyCode, KeyState)> + '_ {
         self.key_map.iter().map(|(k, v)| (*k, *v))
     }

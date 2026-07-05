@@ -10,6 +10,7 @@ mod key_state;
 mod keyboard_input;
 mod mouse_input;
 
+mod timer;
 mod graphic;
 
 pub struct App {

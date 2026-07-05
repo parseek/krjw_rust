@@ -19,18 +19,23 @@ pub struct MouseInput {
 }
 
 impl MouseInput {
+    #[allow(unused)]
     pub fn get_mouse_position(&self) -> (f64, f64) {
         self.mouse_position
     }
+    #[allow(unused)]
     pub fn get_mouse_delta(&self) -> (f64, f64) {
         self.mouse_delta
     }
+    #[allow(unused)]
     pub fn get_mouse_button_state(&self, button_index: MouseButton) -> KeyState {
         self.mouse_buttons[button_index as usize]
     }
+    #[allow(unused)]
     pub fn get_mouse_wheel_delta(&self) -> (f64, f64) {
         self.mouse_wheel_delta
     }
+    #[allow(unused)]
     pub fn is_in_window(&self) -> bool {
         self.in_window
     }
@@ -41,6 +46,7 @@ impl MouseInput {
         self.mouse_delta = (0.0, 0.0);
         self.mouse_wheel_delta = (0.0, 0.0);
     }
+    #[allow(unused)]
     pub fn get_mouse_button_states_iter(
         &self,
     ) -> impl Iterator<Item = (MouseButton, KeyState)> + '_ {
@@ -67,6 +73,7 @@ impl MouseInput {
                 //     the mouse button pressed.
                 self.mouse_position = (position.x, position.y);
             }
+            #[allow(unused)]
             winit::event::WindowEvent::MouseWheel {
                 device_id,
                 delta,
@@ -84,9 +91,11 @@ impl MouseInput {
                     _ => {}
                 }
             }
+            #[allow(unused)]
             winit::event::WindowEvent::CursorEntered { device_id } => {
                 self.in_window = true;
             }
+            #[allow(unused)]
             winit::event::WindowEvent::CursorLeft { device_id } => {
                 self.in_window = false;
             }

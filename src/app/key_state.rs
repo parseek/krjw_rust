@@ -6,21 +6,27 @@ pub const KEY_STATE_MASK_EDGE: u8 = 0b0010;
 pub const KEY_STATE_MASK_TRUE_EDGE: u8 = 0b0110;
 pub const KEY_STATE_MASK_TRUE_EDGE_BIT: u8 = 0b0100;
 
+#[allow(unused)]
 pub const KEY_STATE_RELEASED: KeyState = KeyState(0);
+#[allow(unused)]
 pub const KEY_STATE_PRESSING: KeyState = KeyState(KEY_STATE_MASK_PRESSED);
 
-// Up edge provided by OS, but it may not be a "true" edge.
+/// Up edge provided by OS, but it may not be a "true" edge.
+#[allow(unused)]
 pub const KEY_STATE_UP_EDGE: KeyState = KeyState(KEY_STATE_MASK_EDGE);
 
-// Some OSes may not provide true edge detection, so we can use this constant to represent a up edge that is also a true edge.
+/// Some OSes may not provide true edge detection, so we can use this constant to represent a up edge that is also a true edge.
+#[allow(unused)]
 pub const KEY_STATE_UP_TRUE_EDGE: KeyState =
     KeyState(KEY_STATE_MASK_EDGE | KEY_STATE_MASK_TRUE_EDGE);
 
-// Down edge provided by OS, but it may not be a "true" edge.
-// Used for typing etc.
+/// Down edge provided by OS, but it may not be a "true" edge.
+/// Used for typing etc.
+#[allow(unused)]
 pub const KEY_STATE_DOWN_EDGE: KeyState = KeyState(KEY_STATE_MASK_PRESSED | KEY_STATE_MASK_EDGE);
 
-// Some OSes may not provide true edge detection, so we can use this constant to represent a down edge that is also a true edge.
+/// Some OSes may not provide true edge detection, so we can use this constant to represent a down edge that is also a true edge.
+#[allow(unused)]
 pub const KEY_STATE_DOWN_TRUE_EDGE: KeyState =
     KeyState(KEY_STATE_MASK_PRESSED | KEY_STATE_MASK_EDGE | KEY_STATE_MASK_TRUE_EDGE);
 
@@ -44,27 +50,35 @@ impl std::fmt::Display for KeyState {
 }
 
 impl KeyState {
+    #[allow(unused)]
     pub fn is_pressed(&self) -> bool {
         (self.0 & KEY_STATE_MASK_PRESSED) != 0
     }
+    #[allow(unused)]
     pub fn is_released(&self) -> bool {
         !self.is_pressed()
     }
+    #[allow(unused)]
     pub fn is_edge(&self) -> bool {
         (self.0 & KEY_STATE_MASK_EDGE) != 0
     }
+    #[allow(unused)]
     pub fn is_true_edge(&self) -> bool {
         (self.0 & KEY_STATE_MASK_TRUE_EDGE_BIT) != 0
     }
+    #[allow(unused)]
     pub fn is_up_edge(&self) -> bool {
         self.is_edge() && self.is_released()
     }
+    #[allow(unused)]
     pub fn is_down_edge(&self) -> bool {
         self.is_edge() && self.is_pressed()
     }
+    #[allow(unused)]
     pub fn is_up_true_edge(&self) -> bool {
         self.is_true_edge() && self.is_released()
     }
+    #[allow(unused)]
     pub fn is_down_true_edge(&self) -> bool {
         self.is_true_edge() && self.is_pressed()
     }
