@@ -1,10 +1,13 @@
 use anyhow::{Context, Result};
 use windows::{
-    Win32::Graphics::{Direct3D::Fxc::*, Direct3D::*, Direct3D11::*, Dxgi::Common::*},
+    Win32::Graphics::{Direct3D::*, Direct3D11::*, Dxgi::Common::*},
     core::PCSTR,
 };
 
-pub struct TriangleRender {
+use super::shader_utils::compile_shader;
+use super::D3D11;
+
+pub struct TestTriangleRender {
     vertex_buffer: ID3D11Buffer,
     vertex_shader: ID3D11VertexShader,
     pixel_shader: ID3D11PixelShader,
@@ -18,7 +21,6 @@ struct Vertex {
 }
 
 const VS_SOURCE: &[u8] = include_bytes!("test_triangle_vs.hlsl");
-
 const PS_SOURCE: &[u8] = include_bytes!("test_triangle_ps.hlsl");
 
 const INPUT_LAYOUT_DESC: [D3D11_INPUT_ELEMENT_DESC; 2] = [
@@ -42,78 +44,19 @@ const INPUT_LAYOUT_DESC: [D3D11_INPUT_ELEMENT_DESC; 2] = [
     },
 ];
 
-fn compile_shader(source: &[u8], entrypoint: PCSTR, target: PCSTR) -> Result<Vec<u8>> {
-    let mut shader_blob = None;
-    let mut error_blob = None;
-
-    let hr = unsafe {
-        D3DCompile(
-            source.as_ptr() as *const _,
-            source.len(),
-            PCSTR::null(),
-            None,
-            None,
-            entrypoint,
-            target,
-            0,
-            0,
-            &mut shader_blob,
-            Some(&mut error_blob),
-        )
-    };
-
-    let blob = shader_blob.ok_or_else(|| {
-        let msg = error_blob.as_ref().map(|blob| unsafe {
-            String::from_utf8_lossy(
-                std::slice::from_raw_parts(
-                    blob.GetBufferPointer() as *const u8,
-                    blob.GetBufferSize(),
-                ),
-            )
-            .into_owned()
-        }).unwrap_or_else(|| format!("D3DCompile returned {:?}", hr));
-        anyhow::anyhow!("D3DCompile failed\n{}", msg)
-    })?;
-
-    Ok(unsafe {
-        std::slice::from_raw_parts(blob.GetBufferPointer() as *const u8, blob.GetBufferSize())
-            .to_vec()
-    })
-}
-
-impl TriangleRender {
+impl TestTriangleRender {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
-        let vs_blob = compile_shader(
-            VS_SOURCE,
-            PCSTR(b"main\0".as_ptr()),
-            PCSTR(b"vs_5_0\0".as_ptr()),
-        )?;
-        let ps_blob = compile_shader(
-            PS_SOURCE,
-            PCSTR(b"main\0".as_ptr()),
-            PCSTR(b"ps_5_0\0".as_ptr()),
-        )?;
+        let vs_blob = compile_shader(VS_SOURCE, PCSTR(b"main\0".as_ptr()), PCSTR(b"vs_5_0\0".as_ptr()))?;
+        let ps_blob = compile_shader(PS_SOURCE, PCSTR(b"main\0".as_ptr()), PCSTR(b"ps_5_0\0".as_ptr()))?;
 
         let mut vertex_shader = None;
-        unsafe {
-            device
-                .CreateVertexShader(&vs_blob, None, Some(&mut vertex_shader))
-                .context("ID3D11Device::CreateVertexShader failed")?;
-        }
+        unsafe { device.CreateVertexShader(&vs_blob, None, Some(&mut vertex_shader)).context("ID3D11Device::CreateVertexShader failed")?; }
 
         let mut pixel_shader = None;
-        unsafe {
-            device
-                .CreatePixelShader(&ps_blob, None, Some(&mut pixel_shader))
-                .context("ID3D11Device::CreatePixelShader failed")?;
-        }
+        unsafe { device.CreatePixelShader(&ps_blob, None, Some(&mut pixel_shader)).context("ID3D11Device::CreatePixelShader failed")?; }
 
         let mut input_layout = None;
-        unsafe {
-            device
-                .CreateInputLayout(&INPUT_LAYOUT_DESC, &vs_blob, Some(&mut input_layout))
-                .context("ID3D11Device::CreateInputLayout failed")?;
-        }
+        unsafe { device.CreateInputLayout(&INPUT_LAYOUT_DESC, &vs_blob, Some(&mut input_layout)).context("ID3D11Device::CreateInputLayout failed")?; }
 
         let vertices: [Vertex; 3] = [
             Vertex { pos: [0.0, 0.5, 0.0], color: [1.0, 0.0, 0.0, 1.0] },
@@ -137,11 +80,7 @@ impl TriangleRender {
         };
 
         let mut vertex_buffer = None;
-        unsafe {
-            device
-                .CreateBuffer(&buffer_desc, Some(&init_data), Some(&mut vertex_buffer))
-                .context("ID3D11Device::CreateBuffer failed")?;
-        }
+        unsafe { device.CreateBuffer(&buffer_desc, Some(&init_data), Some(&mut vertex_buffer)).context("ID3D11Device::CreateBuffer failed")?; }
 
         Ok(Self {
             vertex_buffer: vertex_buffer.unwrap(),
@@ -151,19 +90,18 @@ impl TriangleRender {
         })
     }
 
-    pub fn draw(&self, context: &ID3D11DeviceContext, rtv: &ID3D11RenderTargetView) {
+    pub fn draw(&self, gfx: &D3D11) {
+        let context = &gfx.imm_context;
+        let rtv = gfx.rtv();
         unsafe {
             context.IASetInputLayout(&self.input_layout);
             context.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
             let stride = std::mem::size_of::<Vertex>() as u32;
             let offset = 0u32;
-            context.IASetVertexBuffers(
-                0, 1,
+            context.IASetVertexBuffers(0, 1,
                 Some([Some(self.vertex_buffer.clone())].as_ptr()),
-                Some([stride].as_ptr()),
-                Some([offset].as_ptr()),
-            );
+                Some([stride].as_ptr()), Some([offset].as_ptr()));
             context.VSSetShader(&self.vertex_shader, None);
             context.PSSetShader(&self.pixel_shader, None);
             context.OMSetRenderTargets(Some(&[Some(rtv.clone())]), None);
