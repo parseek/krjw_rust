@@ -1,9 +1,10 @@
+use anyhow::{Context, Result};
 use winit::event::WindowEvent;
 use winit::keyboard::KeyCode;
 use winit::{application::ApplicationHandler, window::WindowAttributes};
 
 use crate::app::graphic::d3d11::test_triangle::TriangleRender;
-use crate::app::graphic::d3d11::{self, D3D11};
+use crate::app::graphic::d3d11::D3D11;
 
 mod key_state;
 mod keyboard_input;
@@ -15,65 +16,63 @@ mod timer;
 #[derive(Default)]
 pub struct App {
     window: Option<winit::window::Window>,
-
-    /// Outer position
     window_pos: (i32, i32),
-
-    /// Inner size
     window_size: (u32, u32),
 
     keyboard_input: keyboard_input::KeyboardInput,
     mouse_input: mouse_input::MouseInput,
 
-    graphic_mod: graphic::d3d11::D3D11,
-
-    frame_counter: u64,
+    gfx: Option<D3D11>,
 
     timer: timer::Timer,
-
-    u: User,
+    state: Option<State>,
 }
 
-#[derive(Default)]
-struct User {
+struct State {
     red: f32,
     blue: f32,
-    triangle_render: Option<d3d11::test_triangle::TriangleRender>,
+    triangle_render: TriangleRender,
+}
+
+impl State {
+    fn new(gfx: &D3D11) -> Result<Self> {
+        let tri_render = TriangleRender::new(&gfx.device)?;
+        Ok(Self {
+            red: 0.0,
+            blue: 0.5,
+            triangle_render: tri_render,
+        })
+    }
 }
 
 impl App {
-    fn on_init(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.u.triangle_render = Some(TriangleRender::new(
-            self.graphic_mod.device.as_ref().unwrap(),
-        ));
+    fn on_init(&mut self) -> Result<()> {
+        let gfx = self.gfx.as_ref().context("App not initialised")?;
+        self.state = Some(State::new(gfx)?);
+        Ok(())
     }
     fn on_frame(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
-        // Get Refs
         let window = self.window.as_ref().unwrap();
-        let imm_context = self.graphic_mod.imm_context.as_ref().unwrap();
-        let rtv = self.graphic_mod.render_target_view.as_ref().unwrap();
-        let this = &mut self.u;
+        let gfx = self.gfx.as_ref().unwrap();
+        let state = self.state.as_mut().unwrap();
 
-        // Get Delta Time
         let delta_time = self.timer.pre_frame_and_get_delta_time();
 
-        // Process
         if self
             .keyboard_input
             .get_key_state(KeyCode::KeyW)
             .is_down_edge()
         {
-            this.red = 1.0_f32
+            state.red = 1.0_f32
         }
         if self
             .keyboard_input
             .get_key_state(KeyCode::KeyR)
             .is_down_edge()
         {
-            this.blue = 1.0_f32
+            state.blue = 1.0_f32
         }
 
-        // Window
         window.set_title(
             format!(
                 "KrisuRJW - FPS: {:.2} dTime: {}",
@@ -83,65 +82,51 @@ impl App {
             .as_str(),
         );
 
-        // Render
-        self.graphic_mod
-            .clear_screen(&[this.red, 0.1, this.blue, 1.0]);
-
-        self.graphic_mod.set_viewport(
-            0.0,
-            0.0,
-            self.window_size.0 as f32,
-            self.window_size.1 as f32,
-        );
-
-        this.triangle_render
-            .as_ref()
-            .unwrap()
-            .draw(imm_context, rtv);
-
-        // Post-Render
-        if this.red > 0.0 {
-            this.red -= (1.0 * delta_time) as f32
-        } else {
-            this.red = 0.0
-        }
-        if this.blue > 0.5 {
-            this.blue -= (0.5 * delta_time) as f32
-        } else {
-            this.blue = 0.5
+        if self.window_size.0 > 0 && self.window_size.1 > 0 {
+            gfx.clear_screen(&[state.red, 0.1, state.blue, 1.0]);
+            gfx.set_viewport(0.0, 0.0, self.window_size.0 as f32, self.window_size.1 as f32);
+            state.triangle_render.draw(&gfx.imm_context, gfx.rtv());
         }
 
-        // Present
-        self.graphic_mod
-            .present()
-            .unwrap_or_else(|e| panic!("Failed to Present. Info: {}", e));
+        if state.red > 0.0 {
+            state.red -= (1.0 * delta_time) as f32
+        } else {
+            state.red = 0.0
+        }
+        if state.blue > 0.5 {
+            state.blue -= (0.5 * delta_time) as f32
+        } else {
+            state.blue = 0.5
+        }
+
+        gfx.present()
+            .unwrap_or_else(|e| panic!("gfx::present: {:#}", e));
         self.timer.post_frame_fpsc();
     }
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.frame_counter = 0;
-
         let window = event_loop
             .create_window(WindowAttributes::default().with_title("KrisuRJW"))
-            .unwrap_or_else(|e| panic!("Failed to create window: {}", e));
+            .unwrap_or_else(|e| panic!("window::create: {:#}", e));
         self.window = Some(window);
+
+        self.gfx = Some(
+            D3D11::init_on_window(self.window.as_ref().unwrap())
+                .unwrap_or_else(|e| panic!("gfx::init: {:#}", e)),
+        );
+
         self.keyboard_input = keyboard_input::KeyboardInput::default();
         self.mouse_input = mouse_input::MouseInput::default();
 
-        self.graphic_mod = D3D11::init_on_window(self.window.as_ref().unwrap());
-
-        self.on_init(event_loop);
+        self.on_init()
+            .unwrap_or_else(|e| panic!("state::init: {:#}", e));
     }
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         self.on_frame(event_loop);
-
-        // End of frame, update the keyboard input state.
         self.keyboard_input.end_frame();
         self.mouse_input.end_frame();
-
-        self.frame_counter += 1;
     }
     fn window_event(
         &mut self,
@@ -158,13 +143,14 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(size) => {
                 self.window_size = (size.width, size.height);
-                self.graphic_mod.on_resize(size.width, size.height);
+                self.gfx
+                    .as_mut()
+                    .unwrap()
+                    .on_resize(size.width, size.height)
+                    .unwrap_or_else(|e| panic!("gfx::resize: {:#}", e));
             }
             WindowEvent::Moved(pos) => {
                 self.window_pos = (pos.x, pos.y);
-            }
-            WindowEvent::RedrawRequested => {
-                // 不需要！！！
             }
             _ => {}
         }
