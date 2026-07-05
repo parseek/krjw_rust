@@ -17,30 +17,9 @@ struct Vertex {
     color: [f32; 4],
 }
 
-const VS_SOURCE: &[u8] = b"\
-struct VS_INPUT {\
-    float3 pos : POSITION;\
-    float4 color : COLOR;\
-};\
-struct PS_INPUT {\
-    float4 pos : SV_POSITION;\
-    float4 color : COLOR;\
-};\
-PS_INPUT main(VS_INPUT input) {\
-    PS_INPUT output;\
-    output.pos = float4(input.pos, 1.0);\
-    output.color = input.color;\
-    return output;\
-}\0";
+const VS_SOURCE: &[u8] = include_bytes!("test_triangle_vs.hlsl");
 
-const PS_SOURCE: &[u8] = b"\
-struct PS_INPUT {\
-    float4 pos : SV_POSITION;\
-    float4 color : COLOR;\
-};\
-float4 main(PS_INPUT input) : SV_Target {\
-    return input.color;\
-}\0";
+const PS_SOURCE: &[u8] = include_bytes!("test_triangle_ps.hlsl");
 
 const INPUT_LAYOUT_DESC: [D3D11_INPUT_ELEMENT_DESC; 2] = [
     D3D11_INPUT_ELEMENT_DESC {
