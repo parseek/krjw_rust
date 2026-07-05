@@ -2,15 +2,15 @@ use winit::event::WindowEvent;
 use winit::keyboard::KeyCode;
 use winit::{application::ApplicationHandler, window::WindowAttributes};
 
-use crate::app::graphic::d3d11::triangle::TriangleRender;
+use crate::app::graphic::d3d11::test_triangle::TriangleRender;
 use crate::app::graphic::d3d11::{self, D3D11};
 
 mod key_state;
 mod keyboard_input;
 mod mouse_input;
 
-mod timer;
 mod graphic;
+mod timer;
 
 #[derive(Default)]
 pub struct App {
@@ -21,7 +21,7 @@ pub struct App {
 
     /// Inner size
     window_size: (u32, u32),
-    
+
     keyboard_input: keyboard_input::KeyboardInput,
     mouse_input: mouse_input::MouseInput,
 
@@ -29,7 +29,7 @@ pub struct App {
 
     frame_counter: u64,
 
-    timer : timer::Timer,
+    timer: timer::Timer,
 
     u: User,
 }
@@ -38,12 +38,14 @@ pub struct App {
 struct User {
     red: f32,
     blue: f32,
-    triangle_render : Option<d3d11::triangle::TriangleRender>,
+    triangle_render: Option<d3d11::test_triangle::TriangleRender>,
 }
 
 impl App {
     fn on_init(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.u.triangle_render = Some(TriangleRender::new(self.graphic_mod.device.as_ref().unwrap()));
+        self.u.triangle_render = Some(TriangleRender::new(
+            self.graphic_mod.device.as_ref().unwrap(),
+        ));
     }
     fn on_frame(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         // Get Refs
@@ -72,15 +74,30 @@ impl App {
         }
 
         // Window
-        window.set_title(format!("KrisuRJW - FPS: {:.2} dTime: {}", self.timer.get_fps(), delta_time).as_str());
+        window.set_title(
+            format!(
+                "KrisuRJW - FPS: {:.2} dTime: {}",
+                self.timer.get_fps(),
+                delta_time
+            )
+            .as_str(),
+        );
 
         // Render
         self.graphic_mod
             .clear_screen(&[this.red, 0.1, this.blue, 1.0]);
 
-        self.graphic_mod.set_viewport(0.0, 0.0, self.window_size.0 as f32, self.window_size.1 as f32);
+        self.graphic_mod.set_viewport(
+            0.0,
+            0.0,
+            self.window_size.0 as f32,
+            self.window_size.1 as f32,
+        );
 
-        this.triangle_render.as_ref().unwrap().draw(imm_context, rtv);
+        this.triangle_render
+            .as_ref()
+            .unwrap()
+            .draw(imm_context, rtv);
 
         // Post-Render
         if this.red > 0.0 {
@@ -117,12 +134,14 @@ impl ApplicationHandler for App {
 
         self.on_init(event_loop);
     }
-    fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
-        // Request redraw every iteration of the event loop to keep continuous rendering alive,
-        // even after Windows modal loops (e.g., system menu from title bar right-click) end.
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
-        }
+    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        self.on_frame(event_loop);
+
+        // End of frame, update the keyboard input state.
+        self.keyboard_input.end_frame();
+        self.mouse_input.end_frame();
+
+        self.frame_counter += 1;
     }
     fn window_event(
         &mut self,
@@ -141,21 +160,11 @@ impl ApplicationHandler for App {
                 self.window_size = (size.width, size.height);
                 self.graphic_mod.on_resize(size.width, size.height);
             }
-            WindowEvent::Moved(pos) =>
-            {
+            WindowEvent::Moved(pos) => {
                 self.window_pos = (pos.x, pos.y);
             }
             WindowEvent::RedrawRequested => {
-                self.on_frame(event_loop);
-
-                // End of frame, update the keyboard input state.
-                self.keyboard_input.end_frame();
-                self.mouse_input.end_frame();
-
-                self.frame_counter += 1;
-                if let Some(window) = self.window.as_ref() {
-                    window.request_redraw();
-                }
+                // 不需要！！！
             }
             _ => {}
         }

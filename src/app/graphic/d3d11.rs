@@ -1,5 +1,4 @@
 use windows::{
-    core::{Interface, HRESULT},
     Win32::{
         Foundation::{HMODULE, HWND},
         Graphics::{
@@ -8,10 +7,11 @@ use windows::{
             Dxgi::{Common::*, *},
         },
     },
+    core::{HRESULT, Interface},
 };
 use winit::{raw_window_handle::HasWindowHandle, window::Window};
 
-pub mod triangle;
+pub mod test_triangle;
 
 #[derive(Debug, Default)]
 pub struct D3D11 {
@@ -51,7 +51,7 @@ impl D3D11 {
                     Width: width,
                     Height: height,
                     MinDepth: 0.0,
-                    MaxDepth: 1.0
+                    MaxDepth: 1.0,
                 }]));
         }
     }
@@ -62,11 +62,7 @@ impl D3D11 {
                 .as_ref()
                 .unwrap()
                 .Present(1, DXGI_PRESENT(0));
-            if hr.is_err() {
-                Err(hr)
-            } else {
-                Ok(())
-            }
+            if hr.is_err() { Err(hr) } else { Ok(()) }
         }
     }
 }

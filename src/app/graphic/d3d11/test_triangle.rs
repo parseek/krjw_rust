@@ -1,11 +1,6 @@
 use windows::{
+    Win32::Graphics::{Direct3D::Fxc::*, Direct3D::*, Direct3D11::*, Dxgi::Common::*},
     core::PCSTR,
-    Win32::Graphics::{
-        Direct3D::Fxc::*,
-        Direct3D11::*,
-        Direct3D::*,
-        Dxgi::Common::*,
-    },
 };
 
 pub struct TriangleRender {
@@ -81,31 +76,35 @@ const INPUT_LAYOUT_DESC: [D3D11_INPUT_ELEMENT_DESC; 2] = [
 
 fn compile_shader(source: &[u8], entrypoint: PCSTR, target: PCSTR) -> Vec<u8> {
     let mut shader_blob = None;
-    let mut error_blob= None;
+    let mut error_blob = None;
 
-    let hr = unsafe{ D3DCompile(
-        source.as_ptr() as *const _,
-        source.len(),
-        PCSTR::null(),
-        None,
-        None,
-        entrypoint,
-        target,
-        0, // D3DCOMPILE_OPTIMIZATION_LEVEL0
-        0, // no effect flags
-        &mut shader_blob,
-        Some(&mut error_blob),
-    )};
+    let hr = unsafe {
+        D3DCompile(
+            source.as_ptr() as *const _,
+            source.len(),
+            PCSTR::null(),
+            None,
+            None,
+            entrypoint,
+            target,
+            0, // D3DCOMPILE_OPTIMIZATION_LEVEL0
+            0, // no effect flags
+            &mut shader_blob,
+            Some(&mut error_blob),
+        )
+    };
 
     let shader_blob = shader_blob.as_ref().unwrap();
 
     if hr.is_err() {
         if error_blob.is_some() {
             let error_ref = error_blob.as_ref().unwrap();
-            let msg = unsafe {std::slice::from_raw_parts(
-                error_ref.GetBufferPointer() as *const u8,
-                error_ref.GetBufferSize(),
-            )};
+            let msg = unsafe {
+                std::slice::from_raw_parts(
+                    error_ref.GetBufferPointer() as *const u8,
+                    error_ref.GetBufferSize(),
+                )
+            };
             panic!(
                 "Shader compilation failed:\n{}",
                 String::from_utf8_lossy(msg)
@@ -116,7 +115,13 @@ fn compile_shader(source: &[u8], entrypoint: PCSTR, target: PCSTR) -> Vec<u8> {
     }
 
     // Take ownership of the returned ID3DBlob
-    unsafe {std::slice::from_raw_parts::<u8>(shader_blob.GetBufferPointer() as *const _, shader_blob.GetBufferSize()).to_vec()}
+    unsafe {
+        std::slice::from_raw_parts::<u8>(
+            shader_blob.GetBufferPointer() as *const _,
+            shader_blob.GetBufferSize(),
+        )
+        .to_vec()
+    }
 }
 
 // ──────────────────────────────────────────
@@ -128,32 +133,32 @@ impl TriangleRender {
     pub fn new(device: &ID3D11Device) -> Self {
         // 1. Compile shaders ──────────────────────────────────────────
         let vs_blob = {
-            compile_shader(VS_SOURCE, PCSTR(b"main\0".as_ptr()), PCSTR(b"vs_5_0\0".as_ptr()))
+            compile_shader(
+                VS_SOURCE,
+                PCSTR(b"main\0".as_ptr()),
+                PCSTR(b"vs_5_0\0".as_ptr()),
+            )
         };
         let ps_blob = {
-            compile_shader(PS_SOURCE, PCSTR(b"main\0".as_ptr()), PCSTR(b"ps_5_0\0".as_ptr()))
+            compile_shader(
+                PS_SOURCE,
+                PCSTR(b"main\0".as_ptr()),
+                PCSTR(b"ps_5_0\0".as_ptr()),
+            )
         };
 
         // 2. Create vertex / pixel shaders ────────────────────────────
         let mut vertex_shader = None;
         unsafe {
             device
-                .CreateVertexShader(
-                    &vs_blob,
-                    None,
-                    Some(&mut vertex_shader)
-                )
+                .CreateVertexShader(&vs_blob, None, Some(&mut vertex_shader))
                 .unwrap_or_else(|e| panic!("Failed to create vertex shader: {:?}", e))
         };
 
         let mut pixel_shader = None;
         unsafe {
             device
-                .CreatePixelShader(
-                    &ps_blob,
-                    None,
-                    Some(&mut pixel_shader)
-                )
+                .CreatePixelShader(&ps_blob, None, Some(&mut pixel_shader))
                 .unwrap_or_else(|e| panic!("Failed to create pixel shader: {:?}", e))
         };
 
@@ -161,11 +166,7 @@ impl TriangleRender {
         let mut input_layout = None;
         unsafe {
             device
-                .CreateInputLayout(
-                    &INPUT_LAYOUT_DESC,
-                    &vs_blob,
-                    Some(&mut input_layout)
-                )
+                .CreateInputLayout(&INPUT_LAYOUT_DESC, &vs_blob, Some(&mut input_layout))
                 .unwrap_or_else(|e| panic!("Failed to create input layout: {:?}", e))
         };
 
@@ -234,8 +235,8 @@ impl TriangleRender {
             let stride = std::mem::size_of::<Vertex>() as u32;
             let offset = 0u32;
             context.IASetVertexBuffers(
-                0,                   // start slot
-                1,                   // number of buffers
+                0, // start slot
+                1, // number of buffers
                 Some([Some(self.vertex_buffer.clone())].as_ptr()),
                 Some([stride].as_ptr()),
                 Some([offset].as_ptr()),

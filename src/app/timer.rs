@@ -16,7 +16,7 @@ impl Default for Timer {
             fpsc_frame_stamp: time::Instant::now(),
             fpsc_duration_acc: 0.0,
             fpsc_frame_count: 0,
-            fps: 0.0
+            fps: 0.0,
         }
     }
 }
@@ -42,7 +42,8 @@ impl Timer {
         self.fpsc_frame_count += 1;
 
         if self.fpsc_duration_acc > 0.99 {
-            self.fps = self.fpsc_frame_count as f64 / self.fpsc_duration_acc;
+            self.fps = (self.fpsc_frame_count as f64) / self.fpsc_duration_acc;
+            // eprintln!("FPS: ({}/{:.04}) {}", self.fpsc_frame_count, self.fpsc_duration_acc, self.fps);
             self.fpsc_frame_count = 0;
             self.fpsc_duration_acc = 0.0;
         }
