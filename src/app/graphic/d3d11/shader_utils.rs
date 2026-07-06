@@ -1,8 +1,5 @@
 use anyhow::Result;
-use windows::{
-    Win32::Graphics::{Direct3D::Fxc::*},
-    core::PCSTR,
-};
+use windows::{Win32::Graphics::Direct3D::Fxc::*, core::PCSTR};
 
 pub fn compile_shader(source: &[u8], entrypoint: PCSTR, target: PCSTR) -> Result<Vec<u8>> {
     let mut shader_blob = None;
@@ -25,16 +22,16 @@ pub fn compile_shader(source: &[u8], entrypoint: PCSTR, target: PCSTR) -> Result
     };
 
     let blob = shader_blob.ok_or_else(|| {
-        let msg = error_blob.as_ref().map(|blob| unsafe {
-            String::from_utf8_lossy(
-                std::slice::from_raw_parts(
+        let msg = error_blob
+            .as_ref()
+            .map(|blob| unsafe {
+                String::from_utf8_lossy(std::slice::from_raw_parts(
                     blob.GetBufferPointer() as *const u8,
                     blob.GetBufferSize(),
-                ),
-            )
-            .into_owned()
-        })
-        .unwrap_or_else(|| format!("D3DCompile returned {:?}", hr));
+                ))
+                .into_owned()
+            })
+            .unwrap_or_else(|| format!("D3DCompile returned {:?}", hr));
         anyhow::anyhow!("D3DCompile failed\n{}", msg)
     })?;
 

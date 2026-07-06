@@ -5,9 +5,9 @@ use winit::event::WindowEvent;
 use winit::keyboard::KeyCode;
 use winit::{application::ApplicationHandler, window::WindowAttributes};
 
+use crate::app::graphic::d3d11::D3D11;
 use crate::app::graphic::d3d11::test_sprite::TestSpriteRender;
 use crate::app::graphic::d3d11::test_triangle::TestTriangleRender;
-use crate::app::graphic::d3d11::D3D11;
 
 mod key_state;
 mod keyboard_input;
@@ -51,12 +51,7 @@ impl State {
             .into_rgba8();
         let (tex_w, tex_h) = img.dimensions();
 
-        let sprite = TestSpriteRender::new(
-            &gfx.device,
-            &img.into_raw(),
-            tex_w,
-            tex_h,
-        )?;
+        let sprite = TestSpriteRender::new(&gfx.device, &img.into_raw(), tex_w, tex_h)?;
 
         Ok(Self {
             red: 0.0,
@@ -71,8 +66,8 @@ impl State {
 
 impl App {
     fn on_init(&mut self) -> Result<()> {
-        let gfx = self.gfx.as_ref().context("App not initialised")?;
-        self.state = Some(State::new(gfx)?);
+        let gfx = self.gfx.as_ref().context("App not initialized")?;
+        self.state = Some(State::new(gfx).context("State::new failed")?);
         Ok(())
     }
     fn on_frame(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
@@ -137,10 +132,14 @@ impl App {
 
             // ── Set states ─────────────────────────────────────────
             unsafe {
-                gfx.imm_context.OMSetBlendState(&gfx.states.blend_alpha, None, 0xFFFFFFFF);
-                gfx.imm_context.RSSetState(&gfx.states.rasterizer_solid_cull_none);
-                gfx.imm_context.OMSetDepthStencilState(&gfx.states.depth_none, 0);
-                gfx.imm_context.PSSetSamplers(0, Some(&[Some(gfx.states.sampler_linear_clamp.clone())]));
+                gfx.imm_context
+                    .OMSetBlendState(&gfx.states.blend_alpha, None, 0xFFFFFFFF);
+                gfx.imm_context
+                    .RSSetState(&gfx.states.rasterizer_solid_cull_none);
+                gfx.imm_context
+                    .OMSetDepthStencilState(&gfx.states.depth_none, 0);
+                gfx.imm_context
+                    .PSSetSamplers(0, Some(&[Some(gfx.states.sampler_linear_clamp.clone())]));
             }
 
             gfx.clear_screen(&[state.red, 0.1, state.blue, 1.0]);
@@ -157,7 +156,7 @@ impl App {
                 let sh = sprite.tex_height as f32;
 
                 // Orthographic projection (window coords: 0,0 = top-left)
-                let mvp = glam::Mat4::orthographic_lh(0.0, w, h, 0.0, 0.0, 1.0);
+                let mvp = glam::Mat4::orthographic_rh(0.0, w, h, 0.0, 0.0, 1.0);
 
                 // Sprite transform: center on screen + rotate
                 let angle = state.rot as f32;
@@ -165,16 +164,18 @@ impl App {
                     * glam::Mat4::from_rotation_z(angle)
                     * glam::Mat4::from_scale(glam::Vec3::splat(0.5));
 
-                sprite.draw(
-                    gfx,
-                    [sw / 2.0, sh / 2.0],      // origin = center of sprite
-                    [sw, sh],                   // size = full texture size
-                    [0.0, 0.0],                 // UV top-left
-                    [sw, sh],                   // UV size = full texture
-                    [1.0, 1.0, 1.0, 1.0],      // color = white
-                    &mvp.transpose(),
-                    &spr.transpose(),
-                ).unwrap_or(());
+                sprite
+                    .draw(
+                        gfx,
+                        [sw / 2.0, sh / 2.0], // origin = center of sprite
+                        [sw, sh],             // size = full texture size
+                        [0.0, 0.0],           // UV top-left
+                        [sw, sh],             // UV size = full texture
+                        [1.0, 1.0, 1.0, 1.0], // color = white
+                        &mvp.transpose(),
+                        &spr.transpose(),
+                    )
+                    .unwrap_or(());
             }
         }
 
@@ -210,8 +211,9 @@ impl ApplicationHandler for App {
         self.keyboard_input = keyboard_input::KeyboardInput::default();
         self.mouse_input = mouse_input::MouseInput::default();
 
-        self.on_init()
-            .unwrap_or_else(|e| panic!("state::init: {:#}", e));
+        self.on_init().unwrap_or_else(|e| {
+            panic!("App::on_init failed. Info: {:#}", e);
+        });
     }
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         self.on_frame(event_loop);

@@ -1,12 +1,15 @@
 use anyhow::{Context, Result};
 use windows::{
     Win32::{
-            Foundation::{HMODULE, HWND, RECT}, Graphics::{
+        Foundation::{HMODULE, HWND, RECT},
+        Graphics::{
             Direct3D::*,
             Direct3D11::*,
             Dxgi::{Common::*, *},
-        }, UI::WindowsAndMessaging,
-    }, core::Interface,
+        },
+        UI::WindowsAndMessaging,
+    },
+    core::Interface,
 };
 use winit::{raw_window_handle::HasWindowHandle, window::Window};
 
@@ -55,15 +58,14 @@ impl D3D11 {
     }
     pub fn set_viewport(&self, top_x: f32, top_y: f32, width: f32, height: f32) {
         unsafe {
-            self.imm_context
-                .RSSetViewports(Some(&[D3D11_VIEWPORT {
-                    TopLeftX: top_x,
-                    TopLeftY: top_y,
-                    Width: width,
-                    Height: height,
-                    MinDepth: 0.0,
-                    MaxDepth: 1.0,
-                }]));
+            self.imm_context.RSSetViewports(Some(&[D3D11_VIEWPORT {
+                TopLeftX: top_x,
+                TopLeftY: top_y,
+                Width: width,
+                Height: height,
+                MinDepth: 0.0,
+                MaxDepth: 1.0,
+            }]));
         }
     }
     pub fn present(&self) -> Result<()> {
@@ -160,8 +162,10 @@ impl D3D11 {
 
         let states = StateObjects::new(&device)?;
 
-        let (width, height) = Self::get_wh_from_hwnd(hwnd).context("D3D11::get_wh_from_hwnd failed")?;
-        let (dstex, dsv) = Self::create_dstex_and_dsv(&device, width, height).context("D3D11::create_dstex_and_dsv failed")?;
+        let (width, height) =
+            Self::get_wh_from_hwnd(hwnd).context("D3D11::get_wh_from_hwnd failed")?;
+        let (dstex, dsv) = Self::create_dstex_and_dsv(&device, width, height)
+            .context("D3D11::create_dstex_and_dsv failed")?;
 
         Ok(Self {
             device,
@@ -203,7 +207,8 @@ impl D3D11 {
     fn get_wh_from_hwnd(hwnd: HWND) -> Result<(u32, u32)> {
         unsafe {
             let mut client_rc: RECT = Default::default();
-            WindowsAndMessaging::GetClientRect(hwnd, &mut client_rc).context("GetClientRect failed")?;
+            WindowsAndMessaging::GetClientRect(hwnd, &mut client_rc)
+                .context("GetClientRect failed")?;
             let width = client_rc.right - client_rc.left;
             let height = client_rc.bottom - client_rc.top;
             let width = width as u32;
@@ -219,31 +224,34 @@ impl D3D11 {
     ) -> Result<(ID3D11Texture2D, ID3D11DepthStencilView)> {
         unsafe {
             let mut dstex = None;
-            device.CreateTexture2D(
-                &D3D11_TEXTURE2D_DESC {
-                    Width: width,
-                    Height: height,
-                    MipLevels: 1,
-                    ArraySize: 1,
-                    Format: DXGI_FORMAT_D24_UNORM_S8_UINT,
-                    SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                    Usage: D3D11_USAGE_DEFAULT,
-                    BindFlags: D3D11_BIND_DEPTH_STENCIL.0 as u32,
-                    CPUAccessFlags: 0,
-                    MiscFlags: 0,
-                },
-                None,
-                Some(&mut dstex)
-            ).context("ID3D11Device::CreateTexture2D failed")?;
+            device
+                .CreateTexture2D(
+                    &D3D11_TEXTURE2D_DESC {
+                        Width: width,
+                        Height: height,
+                        MipLevels: 1,
+                        ArraySize: 1,
+                        Format: DXGI_FORMAT_D24_UNORM_S8_UINT,
+                        SampleDesc: DXGI_SAMPLE_DESC {
+                            Count: 1,
+                            Quality: 0,
+                        },
+                        Usage: D3D11_USAGE_DEFAULT,
+                        BindFlags: D3D11_BIND_DEPTH_STENCIL.0 as u32,
+                        CPUAccessFlags: 0,
+                        MiscFlags: 0,
+                    },
+                    None,
+                    Some(&mut dstex),
+                )
+                .context("ID3D11Device::CreateTexture2D failed")?;
 
             let dstex = dstex.unwrap();
 
             let mut dsv = None;
-            device.CreateDepthStencilView(
-                &dstex,
-                None,
-                Some(&mut dsv)
-            ).context("ID3D11Device::CreateDepthStencilView failed")?;
+            device
+                .CreateDepthStencilView(&dstex, None, Some(&mut dsv))
+                .context("ID3D11Device::CreateDepthStencilView failed")?;
 
             let dsv = dsv.unwrap();
             Ok((dstex, dsv))
@@ -280,22 +288,15 @@ impl D3D11 {
         Ok(())
     }
 
-    pub fn reset_dsv(
-        &mut self,
-        width: u32,
-        height: u32,
-    ) -> Result<()> {
+    pub fn reset_dsv(&mut self, width: u32, height: u32) -> Result<()> {
         if width == 0 || height == 0 {
             return Ok(());
         }
         self.depth_stencil_view = None;
         self.depth_stencil_texture = None;
 
-        let (dstex, dsv) = Self::create_dstex_and_dsv(
-            &self.device,
-            width,
-            height
-        ).context("D3D11::create_dstex_and_dsv failed")?;
+        let (dstex, dsv) = Self::create_dstex_and_dsv(&self.device, width, height)
+            .context("D3D11::create_dstex_and_dsv failed")?;
         self.depth_stencil_texture = Some(dstex);
         self.depth_stencil_view = Some(dsv);
 
@@ -303,8 +304,10 @@ impl D3D11 {
     }
 
     pub fn on_resize(&mut self, width: u32, height: u32) -> Result<()> {
-        self.reset_rtv(width, height, DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG(0)).context("D3D11::reset_rtv failed")?;
-        self.reset_dsv(width, height).context("D3D11::reset_dsv failed")?;
+        self.reset_rtv(width, height, DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG(0))
+            .context("D3D11::reset_rtv failed")?;
+        self.reset_dsv(width, height)
+            .context("D3D11::reset_dsv failed")?;
         Ok(())
     }
 }

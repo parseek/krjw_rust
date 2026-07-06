@@ -4,8 +4,8 @@ use windows::{
     core::PCSTR,
 };
 
-use super::shader_utils::compile_shader;
 use super::D3D11;
+use super::shader_utils::compile_shader;
 
 pub struct TestTriangleRender {
     vertex_buffer: ID3D11Buffer,
@@ -46,22 +46,51 @@ const INPUT_LAYOUT_DESC: [D3D11_INPUT_ELEMENT_DESC; 2] = [
 
 impl TestTriangleRender {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
-        let vs_blob = compile_shader(VS_SOURCE, PCSTR(b"main\0".as_ptr()), PCSTR(b"vs_5_0\0".as_ptr()))?;
-        let ps_blob = compile_shader(PS_SOURCE, PCSTR(b"main\0".as_ptr()), PCSTR(b"ps_5_0\0".as_ptr()))?;
+        let vs_blob = compile_shader(
+            VS_SOURCE,
+            PCSTR(b"main\0".as_ptr()),
+            PCSTR(b"vs_5_0\0".as_ptr()),
+        )?;
+        let ps_blob = compile_shader(
+            PS_SOURCE,
+            PCSTR(b"main\0".as_ptr()),
+            PCSTR(b"ps_5_0\0".as_ptr()),
+        )?;
 
         let mut vertex_shader = None;
-        unsafe { device.CreateVertexShader(&vs_blob, None, Some(&mut vertex_shader)).context("ID3D11Device::CreateVertexShader failed")?; }
+        unsafe {
+            device
+                .CreateVertexShader(&vs_blob, None, Some(&mut vertex_shader))
+                .context("ID3D11Device::CreateVertexShader failed")?;
+        }
 
         let mut pixel_shader = None;
-        unsafe { device.CreatePixelShader(&ps_blob, None, Some(&mut pixel_shader)).context("ID3D11Device::CreatePixelShader failed")?; }
+        unsafe {
+            device
+                .CreatePixelShader(&ps_blob, None, Some(&mut pixel_shader))
+                .context("ID3D11Device::CreatePixelShader failed")?;
+        }
 
         let mut input_layout = None;
-        unsafe { device.CreateInputLayout(&INPUT_LAYOUT_DESC, &vs_blob, Some(&mut input_layout)).context("ID3D11Device::CreateInputLayout failed")?; }
+        unsafe {
+            device
+                .CreateInputLayout(&INPUT_LAYOUT_DESC, &vs_blob, Some(&mut input_layout))
+                .context("ID3D11Device::CreateInputLayout failed")?;
+        }
 
         let vertices: [Vertex; 3] = [
-            Vertex { pos: [0.0, 0.5, 0.0], color: [1.0, 0.0, 0.0, 1.0] },
-            Vertex { pos: [0.5, -0.5, 0.0], color: [0.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [-0.5, -0.5, 0.0], color: [0.0, 1.0, 0.0, 1.0] },
+            Vertex {
+                pos: [0.0, 0.5, 0.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+            Vertex {
+                pos: [0.5, -0.5, 0.0],
+                color: [0.0, 0.0, 1.0, 1.0],
+            },
+            Vertex {
+                pos: [-0.5, -0.5, 0.0],
+                color: [0.0, 1.0, 0.0, 1.0],
+            },
         ];
 
         let buffer_desc = D3D11_BUFFER_DESC {
@@ -80,7 +109,11 @@ impl TestTriangleRender {
         };
 
         let mut vertex_buffer = None;
-        unsafe { device.CreateBuffer(&buffer_desc, Some(&init_data), Some(&mut vertex_buffer)).context("ID3D11Device::CreateBuffer failed")?; }
+        unsafe {
+            device
+                .CreateBuffer(&buffer_desc, Some(&init_data), Some(&mut vertex_buffer))
+                .context("ID3D11Device::CreateBuffer failed")?;
+        }
 
         Ok(Self {
             vertex_buffer: vertex_buffer.unwrap(),
@@ -99,9 +132,13 @@ impl TestTriangleRender {
 
             let stride = std::mem::size_of::<Vertex>() as u32;
             let offset = 0u32;
-            context.IASetVertexBuffers(0, 1,
+            context.IASetVertexBuffers(
+                0,
+                1,
                 Some([Some(self.vertex_buffer.clone())].as_ptr()),
-                Some([stride].as_ptr()), Some([offset].as_ptr()));
+                Some([stride].as_ptr()),
+                Some([offset].as_ptr()),
+            );
             context.VSSetShader(&self.vertex_shader, None);
             context.PSSetShader(&self.pixel_shader, None);
             context.OMSetRenderTargets(Some(&[Some(rtv.clone())]), None);
