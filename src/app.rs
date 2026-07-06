@@ -67,6 +67,7 @@ impl State {
 
         // Load texture from seth.png
         let img = image::load_from_memory(include_bytes!("../seth.png"))
+        // let img = image::load_from_memory(include_bytes!("../../yssy.jpg"))
             .context("failed to load seth.png")?;
         let (tex_w, tex_h) = img.dimensions();
 
@@ -76,7 +77,7 @@ impl State {
         // ── SpriteBatch2D test ──────────────────────────────────
         let tex_info = graphic::d3d11::d3d11_utils::load_texture_from_dynamic_image(
             &gfx.device,
-            &image::load_from_memory(include_bytes!("../seth.png"))?,
+            &img,
         )?;
         let tw = tex_info.width as f32;
         let th = tex_info.height as f32;
@@ -157,8 +158,9 @@ impl App {
     fn on_init(&mut self) -> Result<()> {
         let gfx = self.gfx.as_ref().context("App not initialized")?;
         self.state = Some(State::new(gfx).context("State::new failed")?);
-        println!("赛博吸尘器 with Seth.png");
-        println!("    ---- 🔪Aqua's idea");
+        // println!("赛博吸尘器 with Seth.png");
+        // println!("    ---- 🔪Aqua's idea");
+        println!("赛博吸尘器 with Y水SY");
         println!("操作方式：R、J、W、Z、←、→");
         println!("  - X 键制动");
         println!("  - 鼠标左键吸引");
