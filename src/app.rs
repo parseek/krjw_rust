@@ -158,9 +158,8 @@ impl App {
     fn on_init(&mut self) -> Result<()> {
         let gfx = self.gfx.as_ref().context("App not initialized")?;
         self.state = Some(State::new(gfx).context("State::new failed")?);
-        // println!("赛博吸尘器 with Seth.png");
-        // println!("    ---- 🔪Aqua's idea");
-        println!("赛博吸尘器 with Y水SY");
+        println!("赛博吸尘器 with Seth.png");
+        println!("    ---- 🔪Aqua's idea");
         println!("操作方式：R、J、W、Z、←、→");
         println!("  - X 键制动");
         println!("  - 鼠标左键吸引");
