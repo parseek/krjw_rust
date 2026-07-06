@@ -1,11 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use windows::{
     Win32::Graphics::{Direct3D::*, Direct3D11::*, Dxgi::Common::*},
     core::PCSTR,
 };
 
+use super::d3d11_utils::{self, create_input_layout, write_buffer};
 use super::D3D11;
-use super::shader_utils::compile_shader;
 
 #[allow(unused)]
 pub struct TestSpriteRender {
@@ -67,36 +67,20 @@ impl TestSpriteRender {
         tex_width: u32,
         tex_height: u32,
     ) -> Result<Self> {
-        let vs_blob = compile_shader(
+        let vs_blob = d3d11_utils::compile_shader(
             include_bytes!("test_sprite_vs.hlsl"),
             PCSTR(b"main\0".as_ptr()),
             PCSTR(b"vs_5_0\0".as_ptr()),
         )?;
-        let ps_blob = compile_shader(
+        let ps_blob = d3d11_utils::compile_shader(
             include_bytes!("test_sprite_ps.hlsl"),
             PCSTR(b"main\0".as_ptr()),
             PCSTR(b"ps_5_0\0".as_ptr()),
         )?;
 
-        let mut vertex_shader = None;
-        unsafe {
-            device
-                .CreateVertexShader(&vs_blob, None, Some(&mut vertex_shader))
-                .context("VS failed")?;
-        }
-        let mut pixel_shader = None;
-        unsafe {
-            device
-                .CreatePixelShader(&ps_blob, None, Some(&mut pixel_shader))
-                .context("PS failed")?;
-        }
-
-        let mut input_layout = None;
-        unsafe {
-            device
-                .CreateInputLayout(&INPUT_LAYOUT_DESC, &vs_blob, Some(&mut input_layout))
-                .context("InputLayout failed")?;
-        }
+        let vertex_shader = d3d11_utils::create_vs(device, include_bytes!("test_sprite_vs.hlsl"))?;
+        let pixel_shader = d3d11_utils::create_ps(device, include_bytes!("test_sprite_ps.hlsl"))?;
+        let input_layout = create_input_layout(device, &INPUT_LAYOUT_DESC, &vs_blob)?;
 
         let initial_verts: [SpriteVertex; 4] = [
             SpriteVertex {
@@ -117,132 +101,49 @@ impl TestSpriteRender {
             },
         ];
 
-        let vb_desc = D3D11_BUFFER_DESC {
-            ByteWidth: std::mem::size_of::<[SpriteVertex; 4]>() as u32,
-            Usage: D3D11_USAGE_DYNAMIC,
-            BindFlags: D3D11_BIND_VERTEX_BUFFER.0 as u32,
-            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-            MiscFlags: 0,
-            StructureByteStride: 0,
-        };
-        let init_data = D3D11_SUBRESOURCE_DATA {
-            pSysMem: initial_verts.as_ptr() as *const _ as *mut _,
-            SysMemPitch: 0,
-            SysMemSlicePitch: 0,
-        };
-        let mut vertex_buffer = None;
-        unsafe {
-            device
-                .CreateBuffer(&vb_desc, Some(&init_data), Some(&mut vertex_buffer))
-                .context("VB failed")?;
-        }
+        let vertex_buffer = d3d11_utils::create_dynamic_buffer(
+            device,
+            std::mem::size_of::<[SpriteVertex; 4]>() as u32,
+            D3D11_BIND_VERTEX_BUFFER.0 as u32,
+        )?;
 
         let indices: [u16; 6] = [0, 1, 2, 2, 1, 3];
-        let ib_desc = D3D11_BUFFER_DESC {
-            ByteWidth: std::mem::size_of::<[u16; 6]>() as u32,
-            Usage: D3D11_USAGE_IMMUTABLE,
-            BindFlags: D3D11_BIND_INDEX_BUFFER.0 as u32,
-            CPUAccessFlags: 0,
-            MiscFlags: 0,
-            StructureByteStride: 0,
-        };
-        let ib_init = D3D11_SUBRESOURCE_DATA {
-            pSysMem: indices.as_ptr() as *const _ as *mut _,
-            SysMemPitch: 0,
-            SysMemSlicePitch: 0,
-        };
-        let mut index_buffer = None;
-        unsafe {
-            device
-                .CreateBuffer(&ib_desc, Some(&ib_init), Some(&mut index_buffer))
-                .context("IB failed")?;
-        }
+        let index_buffer = d3d11_utils::create_immutable_buffer(
+            device,
+            d3d11_utils::as_u8_slice(&indices),
+            D3D11_BIND_INDEX_BUFFER.0 as u32,
+        )?;
 
-        let cb_desc = D3D11_BUFFER_DESC {
-            ByteWidth: std::mem::size_of::<CbWorld>() as u32,
-            Usage: D3D11_USAGE_DYNAMIC,
-            BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
-            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-            MiscFlags: 0,
-            StructureByteStride: 0,
-        };
-        let mut cb_world = None;
-        unsafe {
-            device
-                .CreateBuffer(&cb_desc, None, Some(&mut cb_world))
-                .context("CB world failed")?;
-        }
-
-        let cb_desc = D3D11_BUFFER_DESC {
-            ByteWidth: std::mem::size_of::<CbSprite>() as u32,
-            Usage: D3D11_USAGE_DYNAMIC,
-            BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
-            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-            MiscFlags: 0,
-            StructureByteStride: 0,
-        };
-        let mut cb_sprite = None;
-        unsafe {
-            device
-                .CreateBuffer(&cb_desc, None, Some(&mut cb_sprite))
-                .context("CB sprite failed")?;
-        }
+        let cb_world = d3d11_utils::create_constant_buffer::<CbWorld>(device)?;
+        let cb_sprite = d3d11_utils::create_constant_buffer::<CbSprite>(device)?;
 
         // Texture
-        let tex_desc = D3D11_TEXTURE2D_DESC {
-            Width: tex_width,
-            Height: tex_height,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC {
-                Count: 1,
-                Quality: 0,
-            },
-            Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-            CPUAccessFlags: 0,
-            MiscFlags: 0,
-        };
-        let subres = D3D11_SUBRESOURCE_DATA {
-            pSysMem: tex_data.as_ptr() as *const _ as *mut _,
-            SysMemPitch: tex_width * 4,
-            SysMemSlicePitch: 0,
-        };
-        let mut texture = None;
-        unsafe {
-            device
-                .CreateTexture2D(&tex_desc, Some(&subres), Some(&mut texture))
-                .context("CreateTexture2D failed")?;
-        }
-        let texture = texture.unwrap();
+        let texture = d3d11_utils::create_texture_2d(
+            device,
+            tex_width,
+            tex_height,
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            D3D11_USAGE_DEFAULT,
+            0,
+            Some((tex_data, tex_width * 4)),
+        )?;
 
-        let srv_desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
-            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
-            ViewDimension: D3D11_SRV_DIMENSION_TEXTURE2D,
-            Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
-                Texture2D: D3D11_TEX2D_SRV {
-                    MostDetailedMip: 0,
-                    MipLevels: 1,
-                },
-            },
-        };
-        let mut texture_srv = None;
-        unsafe {
-            device
-                .CreateShaderResourceView(&texture, Some(&srv_desc), Some(&mut texture_srv))
-                .context("CreateSRV failed")?;
-        }
+        let texture_srv = d3d11_utils::create_srv(
+            device,
+            &texture,
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+        )?;
 
         Ok(Self {
-            vertex_buffer: vertex_buffer.unwrap(),
-            index_buffer: index_buffer.unwrap(),
-            cb_world: cb_world.unwrap(),
-            cb_sprite: cb_sprite.unwrap(),
-            vertex_shader: vertex_shader.unwrap(),
-            pixel_shader: pixel_shader.unwrap(),
-            input_layout: input_layout.unwrap(),
-            texture_srv: texture_srv.unwrap(),
+            vertex_buffer,
+            index_buffer,
+            cb_world,
+            cb_sprite,
+            vertex_shader,
+            pixel_shader,
+            input_layout,
+            texture_srv,
             tex_width,
             tex_height,
         })
@@ -298,85 +199,18 @@ impl TestSpriteRender {
             },
         ];
 
-        unsafe {
-            // Map + write vertex buffer
-            let mut mapped = std::mem::zeroed();
-            context
-                .Map(
-                    &self.vertex_buffer,
-                    0,
-                    D3D11_MAP_WRITE_DISCARD,
-                    0,
-                    Some(&mut mapped),
-                )
-                .context("context.Map(self.vertex_buffer) failed")?;
-            std::ptr::copy_nonoverlapping(
-                verts.as_ptr() as *const u8,
-                mapped.pData as *mut u8,
-                std::mem::size_of::<[SpriteVertex; 4]>(),
-            );
-            context.Unmap(&self.vertex_buffer, 0);
-
-            // Map + write constant buffers
-            let world_data = CbWorld { mvp: *mvp };
-            let mut mapped = std::mem::zeroed();
-            context
-                .Map(
-                    &self.cb_world,
-                    0,
-                    D3D11_MAP_WRITE_DISCARD,
-                    0,
-                    Some(&mut mapped),
-                )
-                .context("context.Map(self.cb_world) failed")?;
-            std::ptr::copy_nonoverlapping(
-                &world_data as *const _ as *const u8,
-                mapped.pData as *mut u8,
-                std::mem::size_of::<CbWorld>(),
-            );
-            context.Unmap(&self.cb_world, 0);
-
-            // Map + write constant buffers
-            let sprite_data = CbSprite {
+        write_buffer(context, &self.vertex_buffer, &verts)?;
+        write_buffer(context, &self.cb_world, &[CbWorld { mvp: *mvp }])?;
+        write_buffer(
+            context,
+            &self.cb_sprite,
+            &[CbSprite {
                 transform_spr: *spr,
                 color,
-            };
-            let mut mapped = std::mem::zeroed();
-            context
-                .Map(
-                    &self.cb_sprite,
-                    0,
-                    D3D11_MAP_WRITE_DISCARD,
-                    0,
-                    Some(&mut mapped),
-                )
-                .context("context.Map(self.cb_world) failed")?;
-            std::ptr::copy_nonoverlapping(
-                &sprite_data as *const _ as *const u8,
-                mapped.pData as *mut u8,
-                std::mem::size_of::<CbSprite>(),
-            );
-            context.Unmap(&self.cb_sprite, 0);
+            }],
+        )?;
 
-            // // Update constant buffers
-            // let world_data = CbWorld { mvp: *mvp };
-            // context.UpdateSubresource(
-            //     &self.cb_world,
-            //     0,
-            //     None,
-            //     &world_data as *const _ as *const _,
-            //     0, 0,
-            // );
-            // let sprite_data = CbSprite { transform_spr: *spr, color };
-            // context.UpdateSubresource(
-            //     &self.cb_sprite,
-            //     0,
-            //     None,
-            //     &sprite_data as *const _ as *const _,
-            //     0, 0,
-            // );
-
-            // Bind & draw
+        unsafe {
             context.IASetInputLayout(&self.input_layout);
             context.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 

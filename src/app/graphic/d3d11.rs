@@ -13,8 +13,9 @@ use windows::{
 };
 use winit::{raw_window_handle::HasWindowHandle, window::Window};
 
-pub mod shader_utils;
+pub mod d3d11_utils;
 pub mod state_objects;
+pub mod sprite_batch_2d;
 pub mod test_sprite;
 pub mod test_triangle;
 
