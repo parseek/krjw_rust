@@ -1,4 +1,6 @@
 use super::key_state::*;
+use glam::Vec2;
+use winit::event::WindowEvent;
 
 #[derive(Debug)]
 pub enum MouseButton {
@@ -22,6 +24,11 @@ impl MouseInput {
     #[allow(unused)]
     pub fn get_mouse_position(&self) -> (f64, f64) {
         self.mouse_position
+    }
+    /// Returns the mouse position as a glam::Vec2 (f32) for convenience.
+    #[allow(unused)]
+    pub fn get_mouse_pos_vec2(&self) -> Vec2 {
+        Vec2::new(self.mouse_position.0 as f32, self.mouse_position.1 as f32)
     }
     #[allow(unused)]
     pub fn get_mouse_delta(&self) -> (f64, f64) {
@@ -99,19 +106,17 @@ impl MouseInput {
             winit::event::WindowEvent::CursorLeft { device_id } => {
                 self.in_window = false;
             }
-            _ => {}
-        }
-    }
-    pub fn device_event(&mut self, event: &winit::event::DeviceEvent) {
-        match event {
-            winit::event::DeviceEvent::MouseMotion { delta } => {
-                // Frame delta is accumulated, and will be reset at the end of the frame.
-                self.mouse_delta.0 += delta.0;
-                self.mouse_delta.1 += delta.1;
-            }
-            winit::event::DeviceEvent::Button { button, state } => {
-                let button_index = *button;
-                let button_state = &mut self.mouse_buttons[button_index as usize];
+            #[allow(unused)]
+            WindowEvent::MouseInput { device_id, state, button } => {
+                let button_index = match *button {
+                    winit::event::MouseButton::Left => 0,
+                    winit::event::MouseButton::Right => 1,
+                    winit::event::MouseButton::Middle => 2,
+                    winit::event::MouseButton::Back => 3,
+                    winit::event::MouseButton::Forward => 4,
+                    _ => return,
+                };
+                let button_state = &mut self.mouse_buttons[button_index];
                 let new_button_state = match state {
                     winit::event::ElementState::Pressed => {
                         if button_state.is_pressed() {
@@ -130,6 +135,17 @@ impl MouseInput {
                 };
                 *button_state = new_button_state;
             }
+            _ => {}
+        }
+    }
+    pub fn device_event(&mut self, event: &winit::event::DeviceEvent) {
+        match event {
+            winit::event::DeviceEvent::MouseMotion { delta } => {
+                // Frame delta is accumulated, and will be reset at the end of the frame.
+                self.mouse_delta.0 += delta.0;
+                self.mouse_delta.1 += delta.1;
+            }
+            // winit::event::DeviceEvent::Button { button, state } => 
             // winit::event::DeviceEvent::MouseWheel { delta } => {
             //     match delta {
             //         winit::event::MouseScrollDelta::LineDelta(x, y) => {

@@ -4,8 +4,8 @@ use windows::{
     core::PCSTR,
 };
 
-use super::d3d11_utils::{self, create_input_layout};
 use super::D3D11;
+use super::d3d11_utils::{self, create_input_layout};
 
 pub struct TestTriangleRender {
     vertex_buffer: ID3D11Buffer,
@@ -49,7 +49,8 @@ impl TestTriangleRender {
             PCSTR(b"vs_5_0\0".as_ptr()),
         )?;
 
-        let vertex_shader = d3d11_utils::create_vs(device, include_bytes!("test_triangle_vs.hlsl"))?;
+        let vertex_shader =
+            d3d11_utils::create_vs(device, include_bytes!("test_triangle_vs.hlsl"))?;
         let pixel_shader = d3d11_utils::create_ps(device, include_bytes!("test_triangle_ps.hlsl"))?;
         let input_layout = create_input_layout(device, &INPUT_LAYOUT_DESC, &vs_blob)?;
 

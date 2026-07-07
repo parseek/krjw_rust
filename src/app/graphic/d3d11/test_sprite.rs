@@ -4,8 +4,8 @@ use windows::{
     core::PCSTR,
 };
 
-use super::d3d11_utils::{self, create_input_layout, write_buffer};
 use super::D3D11;
+use super::d3d11_utils::{self, create_input_layout, write_buffer};
 
 #[allow(unused)]
 pub struct TestSpriteRender {
@@ -129,11 +129,7 @@ impl TestSpriteRender {
             Some((tex_data, tex_width * 4)),
         )?;
 
-        let texture_srv = d3d11_utils::create_srv(
-            device,
-            &texture,
-            DXGI_FORMAT_R8G8B8A8_UNORM,
-        )?;
+        let texture_srv = d3d11_utils::create_srv(device, &texture, DXGI_FORMAT_R8G8B8A8_UNORM)?;
 
         Ok(Self {
             vertex_buffer,

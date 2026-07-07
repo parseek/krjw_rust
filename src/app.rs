@@ -1,24 +1,29 @@
-use std::f64::consts::PI;
+#[allow(unused_imports)]
+use std::f64::consts::*;
 
-use image::GenericImageView;
 use anyhow::{Context, Result};
+use glam::Vec2;
 use winit::keyboard::KeyCode;
 
-use graphic::d3d11::sprite_batch_2d::{Sprite, SpriteBatch2D};
-use graphic::d3d11::test_sprite::TestSpriteRender;
-use graphic::d3d11::test_triangle::TestTriangleRender;
 use graphic::d3d11::D3D11;
+use graphic::d3d11::d3d11_utils::*;
+use graphic::d3d11::shape_batch_2d::ShapeBatch2D;
+use graphic::d3d11::sprite_batch_2d::{Sprite, SpriteBatch2D};
 
-
+mod camera2d;
 mod key_state;
 mod keyboard_input;
 mod mouse_input;
 
+use camera2d::Camera2D;
 use mouse_input::MouseButton;
 
 mod graphic;
 mod handler;
 mod timer;
+
+const GRID_SPACING: f32 = 100.0;
+const GRID_COLOR: [f32; 4] = [0.15, 0.15, 0.15, 1.0];
 
 #[derive(Default)]
 pub struct App {
@@ -36,8 +41,8 @@ pub struct App {
 }
 
 struct Tile {
-    pos: [f32; 2],
-    vel: [f32; 2],
+    pos: Vec2,
+    vel: Vec2,
     rot: f32,
     rot_vel: f32,
     scale: f32,
@@ -47,38 +52,27 @@ struct Tile {
 
 #[derive(Default)]
 struct State {
-    red: f32,
-    green: f32,
-    blue: f32,
-    triangle_render: Option<TestTriangleRender>,
-    sprite: Option<TestSpriteRender>,
-    rot: f64,
-    auto_rot: bool,
-
-    // SpriteBatch2D test
+    // SpriteBatch2D
     batch: Option<SpriteBatch2D>,
     tiles: Vec<Tile>,
-    batch_tex_srv: Option<graphic::d3d11::d3d11_utils::TextureInfo>,
+    batch_tex_srv: Option<TextureInfo>,
+
+    // ShapeBatch2D (grid + cursor circle)
+    shape_batch: Option<ShapeBatch2D>,
+
+    // Camera
+    camera: Option<Camera2D>,
 }
 
 impl State {
-    fn new(gfx: &D3D11) -> Result<Self> {
-        let tri_render = TestTriangleRender::new(&gfx.device)?;
-
+    fn new(gfx: &D3D11, window_size: Vec2) -> Result<Self> {
         // Load texture from seth.png
         let img = image::load_from_memory(include_bytes!("../seth.png"))
-        // let img = image::load_from_memory(include_bytes!("../../yssy.jpg"))
             .context("failed to load seth.png")?;
-        let (tex_w, tex_h) = img.dimensions();
-
-        let rgba = img.to_rgba8();
-        let sprite = TestSpriteRender::new(&gfx.device, &rgba.into_raw(), tex_w, tex_h)?;
 
         // ── SpriteBatch2D test ──────────────────────────────────
-        let tex_info = graphic::d3d11::d3d11_utils::load_texture_from_dynamic_image(
-            &gfx.device,
-            &img,
-        )?;
+        let tex_info = load_texture_from_dynamic_image(&gfx.device, &img)?;
+        println!("Seth.png: {:?}", tex_info);
         let tw = tex_info.width as f32;
         let th = tex_info.height as f32;
 
@@ -95,23 +89,23 @@ impl State {
             let cy = (i / cols) as f32 * cell_h;
             let angle = i as f32 * 1.3;
 
+            let col = (i % cols) as f32;
+            let row = (i / cols) as f32;
+
             tiles.push(Tile {
-                pos: [
-                    100.0 + i as f32 * 60.0,
-                    100.0 + (i % 7) as f32 * 80.0,
-                ],
-                vel: [
+                pos: Vec2::new((col - 1.5) * 100.0, (row - 2.5) * 100.0),
+                vel: Vec2::new(
                     (i as f32 * 0.7).cos() * 200.0,
                     (i as f32 * 1.1).sin() * 200.0,
-                ],
+                ),
                 rot: 0.0,
                 rot_vel: (i as f32 * 0.5).cos() * 2.0,
                 scale: 0.2 + (i % 3) as f32 * 0.08,
                 sprite_rect: Sprite {
-                    origin_px: [cell_w / 2.0, cell_h / 2.0],
-                    size_px: [cell_w, cell_h],
-                    uv_tl_px: [cx, cy],
-                    uv_size_px: [cell_w, cell_h],
+                    origin_px: Vec2::new(cell_w / 2.0, cell_h / 2.0),
+                    size_px: Vec2::new(cell_w, cell_h),
+                    uv_tl_px: Vec2::new(cx, cy),
+                    uv_size_px: Vec2::new(cell_w, cell_h),
                 },
                 color: [
                     0.5 + (angle).sin() * 0.5,
@@ -122,128 +116,218 @@ impl State {
             });
         }
 
+        // ShapeBatch2D used for both grid and cursor circle.
+        // 4096 triangles should be enough for a dense grid.
+        let shape_batch = ShapeBatch2D::new(&gfx.device, 4096)?;
+
         Ok(Self {
-            red: 0.0,
-            green: 0.1,
-            blue: 0.5,
-            triangle_render: Some(tri_render),
-            sprite: Some(sprite),
-            auto_rot: true,
             batch: Some(batch),
             tiles,
             batch_tex_srv: Some(tex_info),
+            shape_batch: Some(shape_batch),
+            camera: Some(Camera2D::new(window_size)),
             ..Default::default()
         })
     }
 }
 
+#[allow(unused)]
 macro_rules! key_pressed {
     ($self:expr, $key:expr) => {
-        $self
-            .keyboard_input
-            .get_key_state($key)
-            .is_pressed()
+        $self.keyboard_input.get_key_state($key).is_pressed()
     };
 }
 
+#[allow(unused)]
 macro_rules! key_state {
     ($self:expr, $key:expr) => {
-        $self
-            .keyboard_input
-            .get_key_state($key)
+        $self.keyboard_input.get_key_state($key)
     };
+}
+
+/// Build grid lines within the culling square and store them in `sb`.
+fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, grid_spacing: f32, grid_color: [f32; 4]) {
+    let hw = camera.viewport_size.x * 0.5 * camera.zoom.x;
+    let hh = camera.viewport_size.y * 0.5 * camera.zoom.y;
+    let half_side = (hw * hw + hh * hh).sqrt();
+
+    let cx = camera.position.x;
+    let cy = camera.position.y;
+
+    let min_x = ((cx - half_side) / grid_spacing).floor() * grid_spacing;
+    let max_x = ((cx + half_side) / grid_spacing).ceil() * grid_spacing;
+    let min_y = ((cy - half_side) / grid_spacing).floor() * grid_spacing;
+    let max_y = ((cy + half_side) / grid_spacing).ceil() * grid_spacing;
+
+    // Clamp to a sane max to avoid blowing up the batch
+    let max_lines = 500;
+    let num_x = ((max_x - min_x) / grid_spacing) as usize;
+    let num_y = ((max_y - min_y) / grid_spacing) as usize;
+    if num_x > max_lines || num_y > max_lines {
+        return;
+    }
+
+    // Vertical lines
+    let mut x = min_x;
+    while x <= max_x {
+        let from = Vec2::new(x, min_y);
+        let to = Vec2::new(x, max_y);
+        let shadow_offset = Vec2 { x: 5.0, y: 5.0};
+        sb.add_square_line(
+            from + shadow_offset,
+            to + shadow_offset,
+            10.0,
+            [0.0, 0.0, 0.0, 0.2],
+        );
+        sb.add_square_line(
+            from,
+            to,
+            10.0,
+            grid_color,
+        );
+        x += grid_spacing;
+    }
+
+    // Horizontal lines
+    let mut y = min_y;
+    while y <= max_y {
+        let from  = Vec2::new(min_x, y);
+        let to = Vec2::new(max_x, y);
+        let shadow_offset = Vec2 { x: 5.0, y: 5.0};
+        sb.add_square_line(
+            from + shadow_offset,
+            to + shadow_offset,
+            10.0,
+            [0.0, 0.0, 0.0, 0.2],
+        );
+        sb.add_square_line(
+            from,
+            to,
+            10.0,
+            grid_color,
+        );
+        y += grid_spacing;
+    }
 }
 
 impl App {
     fn on_init(&mut self) -> Result<()> {
         let gfx = self.gfx.as_ref().context("App not initialized")?;
-        self.state = Some(State::new(gfx).context("State::new failed")?);
+        let ws = Vec2::new(self.window_size.0 as f32, self.window_size.1 as f32);
+        self.state = Some(State::new(gfx, ws).context("State::new failed")?);
         println!("赛博吸尘器 with Seth.png");
         println!("    ---- 🔪Aqua's idea");
-        println!("操作方式：R、J、W、Z、←、→");
-        println!("  - X 键制动");
-        println!("  - 鼠标左键吸引");
+        println!("操作方式：");
+        println!("  - AD WS 移动相机");
+        println!("  - Q / E 旋转相机");
+        println!("  - 鼠标滚轮缩放相机");
+        println!("  - 鼠标左键吸引图块");
+        println!("  - X 键强力制动");
         Ok(())
     }
-    fn on_frame(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn on_frame(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) -> Result<()> {
         let window = self.window.as_ref().unwrap();
         let gfx = self.gfx.as_ref().unwrap();
         let state = self.state.as_mut().unwrap();
 
         let w = self.window_size.0 as f32;
         let h = self.window_size.1 as f32;
-        let (cur_x, cur_y) = self.mouse_input.get_mouse_position();
+        let dt = self.timer.pre_frame_and_get_delta_time() as f32;
+        let dt = if dt > 0.1 { 0.1 } else { dt };
 
-        let delta_time = self.timer.pre_frame_and_get_delta_time();
-        let delta_time = if delta_time > 1.0 { 1.0 } else { delta_time };
+        // ── Camera controls ───────────────────────────────────
+        let camera = state.camera.as_mut().unwrap();
+        camera.viewport_pos = Vec2::splat(0.0f32);
+        camera.viewport_size = Vec2::new(w, h);
 
-        if key_pressed!(self, KeyCode::KeyR) {
-            state.red = 1.0_f32
+        let move_speed = 500.0;
+        let rot_speed = 2.0;
+        let zoom_speed: f32 = 25.0;
+
+        // Rotation
+        if key_pressed!(self, KeyCode::KeyQ) {
+            camera.rotation += rot_speed * dt;
         }
-        if key_pressed!(self, KeyCode::KeyJ) {
-            state.blue = 1.0_f32
+        if key_pressed!(self, KeyCode::KeyE) {
+            camera.rotation -= rot_speed * dt;
+        }
+
+        // Zoom (exponential, frame-rate independent)
+        if self.mouse_input.get_mouse_wheel_delta().1 > 0.0 {
+            camera.zoom *= zoom_speed.powf(dt);
+        }
+        if self.mouse_input.get_mouse_wheel_delta().1 < 0.0 {
+            camera.zoom /= zoom_speed.powf(dt);
+        }
+
+        // Movement (relative to camera rotation)
+        let (sin_rot, cos_rot) = camera.rotation.sin_cos();
+        let mut move_dir = Vec2::ZERO;
+        if key_pressed!(self, KeyCode::KeyD) {
+            move_dir += Vec2::new(cos_rot, sin_rot);
+        }
+        if key_pressed!(self, KeyCode::KeyA) {
+            move_dir -= Vec2::new(cos_rot, sin_rot);
         }
         if key_pressed!(self, KeyCode::KeyW) {
-            state.green = 1.0_f32
+            move_dir -= Vec2::new(-sin_rot, cos_rot);
+        }
+        if key_pressed!(self, KeyCode::KeyS) {
+            move_dir += Vec2::new(-sin_rot, cos_rot);
+        }
+        if move_dir.length_squared() > 0.0 {
+            camera.position += move_dir.normalize() * move_speed * dt;
         }
 
-        if key_pressed!(self, KeyCode::ArrowLeft) {
-            state.rot -= 1.0 * PI * delta_time;
-        }
-        if key_pressed!(self, KeyCode::ArrowRight) {
-            state.rot += 1.0 * PI * delta_time;
-        }
-        if key_state!(self, KeyCode::KeyZ).is_down_true_edge() {
-            state.auto_rot = !state.auto_rot;
-        }
-        if state.auto_rot {
-            state.rot += (if key_pressed!(self, KeyCode::KeyX) { 0.01 } else { 0.2 }) * PI * delta_time;
-        }
+        camera.apply_viewport(gfx);
 
-        let lmb_pressed = self.mouse_input.get_mouse_button_state(MouseButton::Left).is_pressed();
+        // Mouse
+        let mouse_screen = self.mouse_input.get_mouse_pos_vec2();
+        let world_mouse = camera.screen_to_world(mouse_screen);
+        let lmb_pressed = self
+            .mouse_input
+            .get_mouse_button_state(MouseButton::Left)
+            .is_pressed();
 
         // ── SpriteBatch2D test: flying tiles ────────────────
-        let dt = delta_time as f32;
         for tile in &mut state.tiles {
-            tile.pos[0] += tile.vel[0] * dt;
-            tile.pos[1] += tile.vel[1] * dt;
+            tile.pos += tile.vel * dt;
             tile.rot += tile.rot_vel * dt;
 
             if lmb_pressed {
-                let distance_to_cursor = glam::Vec2::new(cur_x as f32 - tile.pos[0], cur_y as f32 - tile.pos[1]);
-                let a = distance_to_cursor * 0.1;
-                tile.vel[0] += a.x;
-                tile.vel[1] += a.y;
+                let distance_to_cursor = world_mouse - tile.pos;
+                let x = distance_to_cursor.length();
+                let a = x.sqrt();
+                let a = distance_to_cursor / x * a;
+                tile.vel += a;
             }
 
-            let f : f32 = if key_pressed!(self, KeyCode::KeyX) { 10.0 } else { 0.1 };
-            let len_sqr = tile.vel[0]*tile.vel[0] + tile.vel[1]*tile.vel[1];
-            if (len_sqr) > 25.0 {
-                let a = -glam::Vec2::from_array(tile.vel) * f / len_sqr.sqrt();
-                tile.vel[0] += a.x;
-                tile.vel[1] += a.y;
+            let f: f32 = if key_pressed!(self, KeyCode::KeyX) {
+                10.0
+            } else {
+                0.1
+            };
+            let len_sqr = tile.vel.length_squared();
+            if len_sqr > 25.0 {
+                let a = -tile.vel * f / len_sqr.sqrt();
+                tile.vel += a;
             }
-
-            // Bounce off edges
-            let half_size = 50.0; // approximate half tile size
-            if tile.pos[0] < half_size { tile.vel[0] = tile.vel[0].abs(); }
-            if tile.pos[0] > w - half_size { tile.vel[0] = -tile.vel[0].abs(); }
-            if tile.pos[1] < half_size { tile.vel[1] = tile.vel[1].abs(); }
-            if tile.pos[1] > h - half_size { tile.vel[1] = -tile.vel[1].abs(); }
         }
 
         window.set_title(
             format!(
                 "KrisuRJW - FPS: {:.2} dTime: {:.05}",
                 self.timer.get_fps(),
-                delta_time
+                dt
             )
             .as_str(),
         );
 
-        if self.window_size.0 > 0 && self.window_size.1 > 0 {
+        // -------------------------
+        // Render Stage
+        // -------------------------
 
-            // ── Set states ─────────────────────────────────────────
+        if self.window_size.0 > 0 && self.window_size.1 > 0 {
             unsafe {
                 gfx.imm_context
                     .OMSetBlendState(&gfx.states.blend_alpha, None, 0xFFFFFFFF);
@@ -255,89 +339,70 @@ impl App {
                     .PSSetSamplers(0, Some(&[Some(gfx.states.sampler_linear_clamp.clone())]));
             }
 
-            gfx.clear_screen(&[state.red, state.green, state.blue, 1.0]);
-            gfx.set_viewport(0.0, 0.0, w, h);
+            gfx.clear_screen(&[0.8, 0.8, 0.8, 1.0]);
 
-            // ── Draw triangle ─────────────────────────────────────
-            if let Some(triangle) = state.triangle_render.as_ref() {
-                triangle.draw(gfx);
+            let vp_transposed = camera.vp_matrix().transpose();
+
+            // ── Grid background ──────────────────────────────────
+            if let Some(sb) = state.shape_batch.as_mut() {
+                sb.clear_batch();
+                build_grid(sb, camera, GRID_SPACING, GRID_COLOR);
+                sb.set_mvp(gfx, &vp_transposed);
+                sb.submit_and_draw(gfx)
+                    .context("grid submit_and_draw failed")?;
+                sb.clear_batch();
             }
 
-            // ── Draw test sprite ───────────────────────────────────────
-            if let Some(sprite) = state.sprite.as_ref() {
-                let sw = sprite.tex_width as f32;
-                let sh = sprite.tex_height as f32;
-
-                // Orthographic projection (window coords: 0,0 = top-left)
-                let mvp = glam::Mat4::orthographic_rh(0.0, w, h, 0.0, 0.0, 1.0);
-
-                // Sprite transform: center on screen + rotate
-                let angle = state.rot as f32;
-                let spr = glam::Mat4::from_translation(glam::Vec3::new(w / 2.0, h / 2.0, 0.0))
-                    * glam::Mat4::from_rotation_z(angle)
-                    * glam::Mat4::from_scale(glam::Vec3::splat(0.5));
-
-                sprite
-                    .draw(
-                        gfx,
-                        [sw / 2.0, sh / 2.0], // origin = center of sprite
-                        [sw, sh],             // size = full texture size
-                        [0.0, 0.0],           // UV top-left
-                        [sw, sh],             // UV size = full texture
-                        [1.0, 1.0, 1.0, 1.0], // color = white
-                        &mvp.transpose(),
-                        &spr.transpose(),
-                    )
-                    .unwrap_or(());
-            }
-
+            // ── Tiles (SpriteBatch2D) ────────────────────────────
             if let Some(batch) = state.batch.as_mut() {
                 if let Some(tex) = state.batch_tex_srv.as_ref() {
                     batch.clear_batch();
                     batch.set_texture(tex.srv.clone(), tex.width, tex.height);
-                    if lmb_pressed {
-                        batch.add([cur_x as f32, cur_y as f32], [1.0; 2], 0.0, &state.tiles[0].sprite_rect, [1.0, 1.0, 1.0, 0.2])
-                            .unwrap_or_else(|e| panic!("batch.add failed: {:#}", e));
-                    }
+
                     for tile in &state.tiles {
                         batch
                             .add(
+                                tile.pos + Vec2 { x: 5.0, y: 5.0 },
+                                Vec2::splat(tile.scale),
+                                tile.rot,
+                                &tile.sprite_rect,
+                                [0.0, 0.0, 0.0, 0.2],
+                            )
+                            .unwrap_or_else(|_| ());
+                        batch
+                            .add(
                                 tile.pos,
-                                [tile.scale; 2],
+                                Vec2::splat(tile.scale),
                                 tile.rot,
                                 &tile.sprite_rect,
                                 tile.color,
                             )
-                            .unwrap_or_else(|e| panic!("batch.add failed: {:#}", e));
+                            .unwrap_or_else(|_| ());
                     }
-                    let mvp = glam::Mat4::orthographic_rh(0.0, w, h, 0.0, 0.0, 1.0);
-                    batch.set_mvp(gfx, &mvp.transpose());
-                    batch.submit_and_draw(gfx).unwrap_or_else(|e| {
-                        panic!("batch.submit_and_draw failed: {:#}", e)
-                    });
+
+                    batch.set_mvp(gfx, &vp_transposed);
+                    batch
+                        .submit_and_draw(gfx)
+                        .context("batch.submit_and_draw failed")?;
                     batch.clear_batch();
+                }
+            }
+
+            // ── Cursor circle (ShapeBatch2D) ─────────────────────
+            if lmb_pressed {
+                if let Some(sb) = state.shape_batch.as_mut() {
+                    sb.clear_batch();
+                    sb.add_circle(world_mouse, 30.0, [1.0, 1.0, 1.0, 0.3], 24);
+                    sb.set_mvp(gfx, &vp_transposed);
+                    sb.submit_and_draw(gfx)
+                        .context("shape_batch circle submit_and_draw failed")?;
+                    sb.clear_batch();
                 }
             }
         }
 
-        if state.red > 0.0 {
-            state.red -= (1.0 * delta_time) as f32
-        } else {
-            state.red = 0.0
-        }
-        if state.blue > 0.2 {
-            state.blue -= (0.8 * delta_time) as f32
-        } else {
-            state.blue = 0.2
-        }
-        if state.green > 0.1 {
-            state.green -= (0.9 * delta_time) as f32
-        } else {
-            state.green = 0.1
-        }
-
-        gfx.present()
-            .unwrap_or_else(|e| panic!("gfx::present: {:#}", e));
+        gfx.present().context("gfx::present failed")?;
         self.timer.post_frame_fpsc();
+        Ok(())
     }
 }

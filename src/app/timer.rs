@@ -42,7 +42,7 @@ impl Timer {
         self.fpsc_frame_count += 1;
 
         if self.fpsc_duration_acc > 0.99 {
-            self.fps = ((self.fpsc_frame_count - 1) as f64) / self.fpsc_duration_acc;
+            self.fps = ((self.fpsc_frame_count) as f64) / self.fpsc_duration_acc;
             // eprintln!("FPS: ({}/{:.04}) {}", self.fpsc_frame_count, self.fpsc_duration_acc, self.fps);
             self.fpsc_frame_count = 0;
             self.fpsc_duration_acc = 0.0;

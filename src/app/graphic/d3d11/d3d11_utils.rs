@@ -155,7 +155,11 @@ pub fn create_immutable_buffer(
 
 /// Create a constant buffer sized for `T`.
 pub fn create_constant_buffer<T>(device: &ID3D11Device) -> Result<ID3D11Buffer> {
-    create_dynamic_buffer(device, std::mem::size_of::<T>() as u32, D3D11_BIND_CONSTANT_BUFFER.0 as u32)
+    create_dynamic_buffer(
+        device,
+        std::mem::size_of::<T>() as u32,
+        D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+    )
 }
 
 /// Map (DISCARD), write, and unmap a buffer.
@@ -167,13 +171,7 @@ pub fn write_buffer<T>(
     unsafe {
         let mut mapped = std::mem::zeroed();
         context
-            .Map(
-                buffer,
-                0,
-                D3D11_MAP_WRITE_DISCARD,
-                0,
-                Some(&mut mapped),
-            )
+            .Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped))
             .context("write_buffer Map failed")?;
         std::ptr::copy_nonoverlapping(
             data.as_ptr() as *const u8,
@@ -266,7 +264,7 @@ pub fn create_srv(
     Ok(srv.unwrap())
 }
 
-#[allow(unused)]
+#[derive(Debug)]
 /// Information about a loaded texture.
 pub struct TextureInfo {
     pub texture: ID3D11Texture2D,
@@ -276,7 +274,6 @@ pub struct TextureInfo {
     pub format: DXGI_FORMAT,
 }
 
-#[allow(unused)]
 /// Load a texture from a `DynamicImage`, automatically selecting the
 /// smallest compatible DXGI_FORMAT (L8 → R8, L16 → R16, HDR → R32G32B32A32_FLOAT, etc.).
 pub fn load_texture_from_dynamic_image(
@@ -301,11 +298,7 @@ pub fn load_texture_from_dynamic_image(
                 .pixels()
                 .flat_map(|p| [p.0[0], p.0[1], p.0[2], 255])
                 .collect();
-            (
-                DXGI_FORMAT_R8G8B8A8_UNORM,
-                data,
-                width as usize * 4,
-            )
+            (DXGI_FORMAT_R8G8B8A8_UNORM, data, width as usize * 4)
         }
         image::DynamicImage::ImageRgba8(i) => {
             let data = i.as_raw();
@@ -313,21 +306,23 @@ pub fn load_texture_from_dynamic_image(
         }
         image::DynamicImage::ImageLuma16(i) => {
             let data = unsafe {
-                std::slice::from_raw_parts::<u8>(i.as_ptr() as *const _, i.len() * 2)
+                std::slice::from_raw_parts::<u8>(
+                    i.as_ptr() as *const _,
+                    i.len() * std::mem::size_of::<u16>(),
+                )
             }
             .to_vec();
             (DXGI_FORMAT_R16_UNORM, data, width as usize * 2)
         }
         image::DynamicImage::ImageRgba16(i) => {
             let data = unsafe {
-                std::slice::from_raw_parts::<u8>(i.as_ptr() as *const _, i.len() * 2)
+                std::slice::from_raw_parts::<u8>(
+                    i.as_ptr() as *const _,
+                    i.len() * std::mem::size_of::<u16>(),
+                )
             }
             .to_vec();
-            (
-                DXGI_FORMAT_R16G16B16A16_UNORM,
-                data,
-                width as usize * 8,
-            )
+            (DXGI_FORMAT_R16G16B16A16_UNORM, data, width as usize * 8)
         }
         image::DynamicImage::ImageRgb32F(i) => {
             // D3D11 does not support R32G32B32_FLOAT, expand to RGBA.
@@ -336,36 +331,26 @@ pub fn load_texture_from_dynamic_image(
                 .flat_map(|p| [p.0[0], p.0[1], p.0[2], 1.0])
                 .collect();
             let raw = unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4)
-                    .to_vec()
+                std::slice::from_raw_parts(
+                    data.as_ptr() as *const u8,
+                    data.len() * std::mem::size_of::<f32>(),
+                )
+                .to_vec()
             };
-            (
-                DXGI_FORMAT_R32G32B32A32_FLOAT,
-                raw,
-                width as usize * 16,
-            )
+            (DXGI_FORMAT_R32G32B32A32_FLOAT, raw, width as usize * 16)
         }
         image::DynamicImage::ImageRgba32F(i) => {
             let raw = i.as_raw();
             let data = unsafe {
-                std::slice::from_raw_parts(raw.as_ptr() as *const u8, raw.len() * 4)
-                    .to_vec()
+                std::slice::from_raw_parts(raw.as_ptr() as *const u8, raw.len() * 4).to_vec()
             };
-            (
-                DXGI_FORMAT_R32G32B32A32_FLOAT,
-                data,
-                width as usize * 16,
-            )
+            (DXGI_FORMAT_R32G32B32A32_FLOAT, data, width as usize * 16)
         }
         _ => {
             // Fallback: convert to RGBA8
             let rgba = img.to_rgba8();
             let data = rgba.as_raw().clone();
-            (
-                DXGI_FORMAT_R8G8B8A8_UNORM,
-                data,
-                width as usize * 4,
-            )
+            (DXGI_FORMAT_R8G8B8A8_UNORM, data, width as usize * 4)
         }
     };
 

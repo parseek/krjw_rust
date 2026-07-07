@@ -13,10 +13,17 @@ use windows::{
 };
 use winit::{raw_window_handle::HasWindowHandle, window::Window};
 
+#[allow(unused)]
 pub mod d3d11_utils;
-pub mod state_objects;
+#[allow(unused)]
+pub mod shape_batch_2d;
+#[allow(unused)]
 pub mod sprite_batch_2d;
+#[allow(unused)]
+pub mod state_objects;
+#[allow(unused)]
 pub mod test_sprite;
+#[allow(unused)]
 pub mod test_triangle;
 
 use self::state_objects::StateObjects;
@@ -49,6 +56,12 @@ impl D3D11 {
         self.render_target_view
             .as_ref()
             .expect("render_target_view is None — did ResizeBuffers fail without rebuilding it?")
+    }
+
+    pub fn dsv(&self) -> &ID3D11DepthStencilView {
+        self.depth_stencil_view
+            .as_ref()
+            .expect("depth_stencil_view is None — did on_resize fail?")
     }
 
     pub fn clear_screen(&self, color_rgba: &[f32; 4]) {

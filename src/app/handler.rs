@@ -1,3 +1,4 @@
+use anyhow::Context;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::window::WindowAttributes;
@@ -24,7 +25,11 @@ impl ApplicationHandler for App {
         });
     }
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.on_frame(event_loop);
+        self.on_frame(event_loop)
+            .context("App::on_frame failed")
+            .unwrap_or_else(|e| {
+                panic!("err: {}", e);
+            });
         self.keyboard_input.end_frame();
         self.mouse_input.end_frame();
     }

@@ -1,0 +1,20 @@
+cbuffer WorldCBuf : register(b0) {
+    float4x4 mvp;
+};
+
+struct VSIn {
+    float2 pos   : POSITION;
+    float4 color : COLOR;
+};
+
+struct PSIn {
+    float4 pos   : SV_POSITION;
+    float4 color : COLOR;
+};
+
+PSIn main(VSIn v) {
+    PSIn o;
+    o.pos = mul(float4(v.pos, 0.0f, 1.0f), mvp);
+    o.color = v.color;
+    return o;
+}

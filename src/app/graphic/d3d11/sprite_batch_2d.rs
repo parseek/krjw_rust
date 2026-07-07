@@ -1,20 +1,21 @@
 use anyhow::{Context, Error, Result};
+use glam::Vec2;
 use windows::{
     Win32::Graphics::{Direct3D::*, Direct3D11::*, Dxgi::Common::*},
     core::PCSTR,
 };
 
-use super::d3d11_utils::{self, create_input_layout, write_buffer};
 use super::D3D11;
+use super::d3d11_utils::{self, create_input_layout, write_buffer};
 
 /// Describes the source rectangle of a sprite (in pixels).
 #[allow(unused)]
 #[derive(Copy, Clone)]
 pub struct Sprite {
-    pub origin_px: [f32; 2],
-    pub size_px: [f32; 2],
-    pub uv_tl_px: [f32; 2],
-    pub uv_size_px: [f32; 2],
+    pub origin_px: Vec2,
+    pub size_px: Vec2,
+    pub uv_tl_px: Vec2,
+    pub uv_size_px: Vec2,
 }
 
 #[allow(unused)]
@@ -85,24 +86,17 @@ pub struct SpriteBatch2D {
     capacity: usize,
     vertices: Vec<[SpriteVertex2D; 4]>,
 
-    // Incremented on every add/clear_batch.
-    // submit_and_draw compares this against drawn_version to decide
-    // whether the GPU buffer needs to be re-uploaded.
     batch_version: u64,
     drawn_version: u64,
 }
 
 #[allow(unused)]
 impl SpriteBatch2D {
-    pub fn new(
-        device: &ID3D11Device,
-        capacity: usize,
-    ) -> Result<Self> {
-        if capacity > (0xffff/4) {
+    pub fn new(device: &ID3D11Device, capacity: usize) -> Result<Self> {
+        if capacity > (0xffff / 4) {
             return Err(Error::msg("capacity out of range"));
         }
 
-        // ── Shaders ──────────────────────────────────────────────
         let vs_blob = d3d11_utils::compile_shader(
             include_bytes!("sprite_batch_2d_vs.hlsl"),
             PCSTR(b"main\0".as_ptr()),
@@ -115,7 +109,6 @@ impl SpriteBatch2D {
             d3d11_utils::create_ps(device, include_bytes!("sprite_batch_2d_ps.hlsl"))?;
         let input_layout = create_input_layout(device, &INPUT_LAYOUT_DESC, &vs_blob)?;
 
-        // ── Vertex buffer (dynamic) ──────────────────────────────
         let vb_stride = std::mem::size_of::<SpriteVertex2D>() as u32;
         let vertex_buffer = d3d11_utils::create_dynamic_buffer(
             device,
@@ -123,7 +116,6 @@ impl SpriteBatch2D {
             D3D11_BIND_VERTEX_BUFFER.0 as u32,
         )?;
 
-        // ── Index buffer (immutable, pre-filled) ─────────────────
         let total_indices = 6 * capacity;
         let mut indices = Vec::<u16>::with_capacity(total_indices);
         for i in 0..capacity as u16 {
@@ -136,7 +128,6 @@ impl SpriteBatch2D {
             D3D11_BIND_INDEX_BUFFER.0 as u32,
         )?;
 
-        // ── Constant buffer (mvp) ────────────────────────────────
         let cb_world = d3d11_utils::create_constant_buffer::<CbWorld>(device)?;
 
         Ok(Self {
@@ -154,27 +145,29 @@ impl SpriteBatch2D {
         })
     }
 
-    /// Clear accumulated vertices — call at the start of each frame.
     pub fn clear_batch(&mut self) {
         self.vertices.clear();
         self.batch_version = self.batch_version.wrapping_add(1);
     }
 
-    /// Set the texture
     pub fn set_texture(
         &mut self,
         texture_srv: ID3D11ShaderResourceView,
         tex_width: u32,
         tex_height: u32,
     ) {
-        self.texture = Some(Texture { texture_srv, tex_width, tex_height });
+        self.texture = Some(Texture {
+            texture_srv,
+            tex_width,
+            tex_height,
+        });
     }
 
     /// Add one sprite. Transform = rotate → scale → translate.
     pub fn add(
         &mut self,
-        pos: [f32; 2],
-        scale: [f32; 2],
+        pos: Vec2,
+        scale: Vec2,
         rot: f32,
         sprite: &Sprite,
         color: [f32; 4],
@@ -191,19 +184,18 @@ impl SpriteBatch2D {
         let (cos, sin) = rot.sin_cos();
         let tw = tex.tex_width as f32;
         let th = tex.tex_height as f32;
-        let u0 = uv_tl_px[0] / tw;
-        let v0 = uv_tl_px[1] / th;
-        let u1 = (uv_tl_px[0] + uv_size_px[0]) / tw;
-        let v1 = (uv_tl_px[1] + uv_size_px[1]) / th;
+        let u0 = uv_tl_px.x / tw;
+        let v0 = uv_tl_px.y / th;
+        let u1 = (uv_tl_px.x + uv_size_px.x) / tw;
+        let v1 = (uv_tl_px.y + uv_size_px.y) / th;
 
-        // 4 corner local positions (relative to origin)
-        let ox = -origin_px[0];
-        let oy = -origin_px[1];
+        let ox = -origin_px.x;
+        let oy = -origin_px.y;
         let corners: [[f32; 2]; 4] = [
             [ox, oy],
-            [ox + size_px[0], oy],
-            [ox, oy + size_px[1]],
-            [ox + size_px[0], oy + size_px[1]],
+            [ox + size_px.x, oy],
+            [ox, oy + size_px.y],
+            [ox + size_px.x, oy + size_px.y],
         ];
         let uvs: [[f32; 2]; 4] = [[u0, v0], [u1, v0], [u0, v1], [u1, v1]];
 
@@ -216,9 +208,8 @@ impl SpriteBatch2D {
         for i in 0..4 {
             let lx = corners[i][0];
             let ly = corners[i][1];
-            // rotate → scale → translate
-            let fx = (lx * cos - ly * sin) * scale[0] + pos[0];
-            let fy = (lx * sin + ly * cos) * scale[1] + pos[1];
+            let fx = (lx * cos - ly * sin) * scale.x + pos.x;
+            let fy = (lx * sin + ly * cos) * scale.y + pos.y;
 
             quad[i] = SpriteVertex2D {
                 pos: [fx, fy],
@@ -232,23 +223,11 @@ impl SpriteBatch2D {
         Ok(())
     }
 
-    /// Upload the MVP matrix to the constant buffer.
     pub fn set_mvp(&self, gfx: &D3D11, mvp: &glam::Mat4) {
-        write_buffer(
-            &gfx.imm_context,
-            &self.cb_world,
-            &[CbWorld { mvp: *mvp }],
-        )
-        .expect("sprite_batch_2d::set_mvp failed");
+        write_buffer(&gfx.imm_context, &self.cb_world, &[CbWorld { mvp: *mvp }])
+            .expect("sprite_batch_2d::set_mvp failed");
     }
 
-    /// Draw all accumulated sprites, auto-submitting if the batch has
-    /// changed since the last call.  Automatically splits into multiple
-    /// draw calls when the sprite count exceeds `capacity`.
-    ///
-    /// When the batch has *not* changed (i.e. no `add` or `clear_batch`
-    /// between two calls) the GPU data is simply re-used — useful for
-    /// multi-pass / post-processing effects.
     pub fn submit_and_draw(&mut self, gfx: &D3D11) -> Result<()> {
         let tex = self.texture.as_ref().context("No texture")?;
 
@@ -261,8 +240,8 @@ impl SpriteBatch2D {
 
         let context = &gfx.imm_context;
         let rtv = gfx.rtv();
+        let dsv = gfx.dsv();
 
-        // Bind invariant state once (shaders, layout, textures, etc.)
         unsafe {
             context.IASetInputLayout(&self.input_layout);
             context.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -283,16 +262,14 @@ impl SpriteBatch2D {
             context.PSSetShader(&self.pixel_shader, None);
             context.PSSetShaderResources(0, Some(&[Some(tex.texture_srv.clone())]));
 
-            context.OMSetRenderTargets(Some(&[Some(rtv.clone())]), None);
+            context.OMSetRenderTargets(Some(&[Some(rtv.clone())]), Some(dsv));
         }
 
         if needs_submit {
-            // Data changed — upload per chunk and draw.
             for chunk_start in (0..total).step_by(self.capacity) {
                 let chunk_end = (chunk_start + self.capacity).min(total);
                 let chunk = &self.vertices[chunk_start..chunk_end];
                 let quad_count = chunk.len();
-                debug_assert!(quad_count <= self.capacity);
 
                 write_buffer(&gfx.imm_context, &self.vertex_buffer, chunk)
                     .unwrap_or_else(|e| panic!("sprite_batch_2d::submit failed: {:#}", e));
@@ -302,8 +279,6 @@ impl SpriteBatch2D {
                 }
             }
         } else {
-            // Reuse already-uploaded data — single draw for the full count.
-            // (Only reaches 2nd+ pass in multi-pass effects; total ≤ capacity.)
             let quad_count = total as u32;
             unsafe {
                 context.DrawIndexed(6 * quad_count, 0, 0);
@@ -314,16 +289,11 @@ impl SpriteBatch2D {
         Ok(())
     }
 
-    /// Convenience method: clear_batch → (add …) → set_mvp → submit_and_draw.
-    ///
-    /// Like `submit_and_draw`, you have to *manually* clears the batch after drawing
-    /// and then you can start collecting sprites for the next frame.
     pub fn draw(&mut self, gfx: &D3D11, mvp: &glam::Mat4) -> Result<()> {
         self.set_mvp(gfx, mvp);
         self.submit_and_draw(gfx)
     }
 
-    /// Number of sprites currently in the batch.
     pub fn count(&self) -> usize {
         self.vertices.len()
     }
