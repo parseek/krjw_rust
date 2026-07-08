@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Graphics::Dxgi::Common::*;
 
 #[allow(unused)]
 #[derive(Debug)]
@@ -22,6 +23,9 @@ pub struct StateObjects {
     // Depth-stencil states
     pub depth_none: ID3D11DepthStencilState,
     pub depth_less: ID3D11DepthStencilState,
+
+    // Built-in 1×1 white texture (for solid-color rendering via SpriteBatch2D)
+    pub white_texture_srv: ID3D11ShaderResourceView,
 }
 
 impl StateObjects {
@@ -250,6 +254,26 @@ impl StateObjects {
                 state.unwrap()
             };
 
+            // ── Built-in 1×1 white texture ───────────────────────────
+            let white_texture_srv = {
+                use super::d3d11_utils;
+
+                let white_pixel: [u8; 4] = [255; 4];
+                let tex = d3d11_utils::create_texture_2d(
+                    device,
+                    1,
+                    1,
+                    DXGI_FORMAT_R8G8B8A8_UNORM,
+                    D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                    D3D11_USAGE_IMMUTABLE,
+                    0,
+                    Some((&white_pixel, 4)),
+                )
+                .context("create_white_texture failed")?;
+                d3d11_utils::create_srv(device, &tex, DXGI_FORMAT_R8G8B8A8_UNORM)
+                    .context("create_white_srv failed")?
+            };
+
             Ok(Self {
                 blend_opaque,
                 blend_alpha,
@@ -262,6 +286,7 @@ impl StateObjects {
                 rasterizer_wireframe,
                 depth_none,
                 depth_less,
+                white_texture_srv,
             })
         }
     }
