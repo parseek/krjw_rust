@@ -181,7 +181,7 @@ impl SpriteBatch2D {
             uv_size_px,
         } = *sprite;
 
-        let (cos, sin) = rot.sin_cos();
+        let (sin, cos) = rot.sin_cos();
         let tw = tex.tex_width as f32;
         let th = tex.tex_height as f32;
         let u0 = uv_tl_px.x / tw;

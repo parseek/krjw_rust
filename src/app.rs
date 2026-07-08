@@ -10,13 +10,23 @@ use graphic::d3d11::d3d11_utils::*;
 use graphic::d3d11::shape_batch_2d::ShapeBatch2D;
 use graphic::d3d11::sprite_batch_2d::{Sprite, SpriteBatch2D};
 
+#[allow(unused)]
 mod camera2d;
+#[allow(unused)]
+mod collider;
+#[allow(unused)]
 mod key_state;
+#[allow(unused)]
 mod keyboard_input;
+#[allow(unused)]
 mod mouse_input;
+#[allow(unused)]
+mod transform2d;
 
 use camera2d::Camera2D;
+use collider::{Collider, ColliderInstance};
 use mouse_input::MouseButton;
+use transform2d::Transform2D;
 
 mod graphic;
 mod handler;
@@ -47,6 +57,7 @@ struct Tile {
     rot_vel: f32,
     scale: f32,
     sprite_rect: Sprite,
+    collider: Collider,
     color: [f32; 4],
 }
 
@@ -57,11 +68,15 @@ struct State {
     tiles: Vec<Tile>,
     batch_tex_srv: Option<TextureInfo>,
 
-    // ShapeBatch2D (grid + cursor circle)
+    // ShapeBatch2D (grid + cursor circle + collider outlines)
     shape_batch: Option<ShapeBatch2D>,
 
     // Camera
     camera: Option<Camera2D>,
+
+    // Hover state
+    hovered_tile: Option<usize>,
+
 }
 
 impl State {
@@ -93,7 +108,7 @@ impl State {
             let row = (i / cols) as f32;
 
             tiles.push(Tile {
-                pos: Vec2::new((col - 1.5) * 100.0, (row - 2.5) * 100.0),
+                pos: Vec2::new((col - 1.5) * 150.0, (row - 2.5) * 150.0),
                 vel: Vec2::new(
                     (i as f32 * 0.7).cos() * 200.0,
                     (i as f32 * 1.1).sin() * 200.0,
@@ -107,6 +122,9 @@ impl State {
                     uv_tl_px: Vec2::new(cx, cy),
                     uv_size_px: Vec2::new(cell_w, cell_h),
                 },
+                collider: Collider::Rect {
+                    half_size: Vec2::new(cell_w, cell_h) * 0.5,
+                },
                 color: [
                     0.5 + (angle).sin() * 0.5,
                     0.5 + (angle + 2.0).sin() * 0.5,
@@ -116,8 +134,7 @@ impl State {
             });
         }
 
-        // ShapeBatch2D used for both grid and cursor circle.
-        // 4096 triangles should be enough for a dense grid.
+        // ShapeBatch2D used for grid, cursor circle, and collider outlines.
         let shape_batch = ShapeBatch2D::new(&gfx.device, 4096)?;
 
         Ok(Self {
@@ -126,7 +143,7 @@ impl State {
             batch_tex_srv: Some(tex_info),
             shape_batch: Some(shape_batch),
             camera: Some(Camera2D::new(window_size)),
-            ..Default::default()
+            hovered_tile: None,
         })
     }
 }
@@ -210,6 +227,41 @@ fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, grid_spacing: f32, grid_
     }
 }
 
+/// Draw a collider outline using the ShapeBatch2D.
+fn draw_collider_outline(sb: &mut ShapeBatch2D, inst: &ColliderInstance, color: [f32; 4]) {
+    match inst.shape {
+        Collider::Rect { half_size } | Collider::AABB { half_size } => {
+            let h = if matches!(inst.shape, Collider::AABB { .. }) {
+                *half_size * inst.xform.scale
+            } else {
+                *half_size
+            };
+            // Four corners in local space
+            let local = [
+                Vec2::new(-h.x, -h.y),
+                Vec2::new(h.x, -h.y),
+                Vec2::new(h.x, h.y),
+                Vec2::new(-h.x, h.y),
+            ];
+            // Transform to world space
+            let mut world = [Vec2::ZERO; 4];
+            for (i, lc) in local.iter().enumerate() {
+                world[i] = inst.xform.transform_point(*lc);
+            }
+            // Four line segments
+            for i in 0..4 {
+                let from = world[i];
+                let to = world[(i + 1) % 4];
+                sb.add_square_line(from, to, 3.0, color);
+            }
+        }
+        Collider::Circle { radius } => {
+            let r = radius * inst.xform.scale.x.max(inst.xform.scale.y);
+            sb.add_circle(inst.xform.pos, r, color, 24);
+        }
+    }
+}
+
 impl App {
     fn on_init(&mut self) -> Result<()> {
         let gfx = self.gfx.as_ref().context("App not initialized")?;
@@ -289,8 +341,9 @@ impl App {
             .get_mouse_button_state(MouseButton::Left)
             .is_pressed();
 
-        // ── SpriteBatch2D test: flying tiles ────────────────
-        for tile in &mut state.tiles {
+        // ── Tile physics + hover detection ─────────────────────
+        state.hovered_tile = None;
+        for (idx, tile) in state.tiles.iter_mut().enumerate().rev() {
             tile.pos += tile.vel * dt;
             tile.rot += tile.rot_vel * dt;
 
@@ -311,6 +364,19 @@ impl App {
             if len_sqr > 25.0 {
                 let a = -tile.vel * f / len_sqr.sqrt();
                 tile.vel += a;
+            }
+
+            // Hover detection
+            let tile_inst = ColliderInstance {
+                shape: &tile.collider,
+                xform: Transform2D {
+                    pos: tile.pos,
+                    scale: Vec2::splat(tile.scale),
+                    rot: tile.rot,
+                },
+            };
+            if tile_inst.contains_point(world_mouse) && state.hovered_tile.is_none() {
+                state.hovered_tile = Some(idx);
             }
         }
 
@@ -388,16 +454,37 @@ impl App {
                 }
             }
 
-            // ── Cursor circle (ShapeBatch2D) ─────────────────────
-            if lmb_pressed {
-                if let Some(sb) = state.shape_batch.as_mut() {
-                    sb.clear_batch();
-                    sb.add_circle(world_mouse, 30.0, [1.0, 1.0, 1.0, 0.3], 24);
-                    sb.set_mvp(gfx, &vp_transposed);
-                    sb.submit_and_draw(gfx)
-                        .context("shape_batch circle submit_and_draw failed")?;
-                    sb.clear_batch();
+            // ── Collider outlines + cursor circle ─────────────────
+            if let Some(sb) = state.shape_batch.as_mut() {
+                sb.clear_batch();
+
+                // Draw all tile colliders
+                for (idx, tile) in state.tiles.iter().enumerate() {
+                    let inst = ColliderInstance {
+                        shape: &tile.collider,
+                        xform: Transform2D {
+                            pos: tile.pos,
+                            scale: Vec2::splat(tile.scale),
+                            rot: tile.rot,
+                        },
+                    };
+                    let color = if Some(idx) == state.hovered_tile {
+                        [1.0, 0.8, 0.0, 0.8] // yellow highlight
+                    } else {
+                        [0.0, 1.0, 0.0, 0.3] // green dim
+                    };
+                    draw_collider_outline(sb, &inst, color);
                 }
+
+                // Cursor circle
+                if lmb_pressed {
+                    sb.add_circle(world_mouse, 30.0, [1.0, 1.0, 1.0, 0.3], 24);
+                }
+
+                sb.set_mvp(gfx, &vp_transposed);
+                sb.submit_and_draw(gfx)
+                    .context("shape_batch submit_and_draw failed")?;
+                sb.clear_batch();
             }
         }
 
