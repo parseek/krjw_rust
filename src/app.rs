@@ -186,10 +186,10 @@ fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, grid_spacing: f32, grid_
 
     // Vertical lines
     let mut x = min_x;
+    let shadow_offset = Vec2 { x: 5.0, y: 5.0};
     while x <= max_x {
         let from = Vec2::new(x, min_y);
         let to = Vec2::new(x, max_y);
-        let shadow_offset = Vec2 { x: 5.0, y: 5.0};
         sb.add_square_line(
             from + shadow_offset,
             to + shadow_offset,
@@ -210,7 +210,6 @@ fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, grid_spacing: f32, grid_
     while y <= max_y {
         let from  = Vec2::new(min_x, y);
         let to = Vec2::new(max_x, y);
-        let shadow_offset = Vec2 { x: 5.0, y: 5.0};
         sb.add_square_line(
             from + shadow_offset,
             to + shadow_offset,
@@ -298,10 +297,10 @@ impl App {
 
         // Rotation
         if key_pressed!(self, KeyCode::KeyQ) {
-            camera.rotation += rot_speed * dt;
+            camera.rotation -= rot_speed * dt;
         }
         if key_pressed!(self, KeyCode::KeyE) {
-            camera.rotation -= rot_speed * dt;
+            camera.rotation += rot_speed * dt;
         }
 
         // Zoom (exponential, frame-rate independent)
