@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.103"
 glam = "0.29"
 image = "0.25.10"
+kira = "0.12.1"
 winit = "0.30.13"
 
 [target.'cfg(target_os = "windows")'.dependencies]

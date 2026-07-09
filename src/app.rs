@@ -1,9 +1,17 @@
+use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::f64::consts::*;
+use std::io::Cursor;
 
 use anyhow::{Context, Result};
 use glam::Vec2;
 use winit::keyboard::KeyCode;
+
+use kira::{
+	AudioManager, DefaultBackend,
+	sound::static_sound::StaticSoundData,
+    sound::streaming::StreamingSoundData,
+};
 
 use graphic::d3d11::D3D11;
 use graphic::d3d11::d3d11_utils::*;
@@ -43,6 +51,9 @@ pub struct App {
 
     keyboard_input: keyboard_input::KeyboardInput,
     mouse_input: mouse_input::MouseInput,
+
+    audio_mgr: Option<AudioManager>,
+    sounds: HashMap<String, StaticSoundData>,
 
     gfx: Option<D3D11>,
 
@@ -266,6 +277,17 @@ impl App {
         let gfx = self.gfx.as_ref().context("App not initialized")?;
         let ws = Vec2::new(self.window_size.0 as f32, self.window_size.1 as f32);
         self.state = Some(State::new(gfx, ws).context("State::new failed")?);
+
+        let audio_mgr = AudioManager::<DefaultBackend>::new(Default::default()).context("AudioManager::<DefaultBackend>::new failed")?;
+        self.audio_mgr = Some(audio_mgr);
+        macro_rules! insert_snd {
+            ($name:expr, $dir:expr) => {
+                self.sounds.insert($name.to_string(), StaticSoundData::from_cursor(Cursor::new(include_bytes!($dir)))?);
+            };
+        }
+        insert_snd!("snd_ominous_cancel", "../snd_ominous_cancel.wav");
+        insert_snd!("snd_ominous", "../snd_ominous.wav");
+
         println!("赛博吸尘器 with Seth.png");
         println!("    ---- 🔪Aqua's idea");
         println!("操作方式：");
@@ -280,6 +302,7 @@ impl App {
         let window = self.window.as_ref().unwrap();
         let gfx = self.gfx.as_ref().unwrap();
         let state = self.state.as_mut().unwrap();
+        let audio_mgr = self.audio_mgr.as_mut().unwrap();
 
         let w = self.window_size.0 as f32;
         let h = self.window_size.1 as f32;
@@ -339,6 +362,20 @@ impl App {
             .mouse_input
             .get_mouse_button_state(MouseButton::Left)
             .is_pressed();
+
+        if key_state!(self, KeyCode::KeyX).is_down_true_edge() {
+            if let Some(falling_snd) = self.sounds.get("snd_ominous_cancel") {
+                audio_mgr.play(falling_snd.clone().volume(0.0)).unwrap();
+            }
+        }
+        if self
+            .mouse_input
+            .get_mouse_button_state(MouseButton::Left)
+            .is_down_edge() {
+                if let Some(snd) = self.sounds.get("snd_ominous") {
+                    audio_mgr.play(snd.clone().volume(0.0)).unwrap();
+                }
+            }
 
         // ── Tile physics + hover detection ─────────────────────
         state.hovered_tile = None;
