@@ -6,11 +6,11 @@ use std::io::Cursor;
 use anyhow::{Context, Result};
 use glam::Vec2;
 use winit::keyboard::KeyCode;
+use winit::window::WindowAttributes;
 
 use kira::{
-	AudioManager, DefaultBackend,
-	sound::static_sound::StaticSoundData,
-    sound::streaming::StreamingSoundData,
+    AudioManager, DefaultBackend,
+    sound::static_sound::StaticSoundData,
 };
 
 use graphic::d3d11::D3D11;
@@ -43,25 +43,20 @@ mod timer;
 const GRID_SPACING: f32 = 100.0;
 const GRID_COLOR: [f32; 4] = [0.15, 0.15, 0.15, 1.0];
 
-#[derive(Default)]
-pub struct App {
-    window: Option<winit::window::Window>,
-    window_pos: (i32, i32),
-    window_size: (u32, u32),
-
-    keyboard_input: keyboard_input::KeyboardInput,
-    mouse_input: mouse_input::MouseInput,
-
-    audio_mgr: Option<AudioManager>,
-    sounds: HashMap<String, StaticSoundData>,
-
-    gfx: Option<D3D11>,
-
-    timer: timer::Timer,
-    state: Option<State>,
+pub struct AppContext {
+    pub window: winit::window::Window,
+    pub gfx: D3D11,
+    pub audio_mgr: AudioManager,
+    pub batch: SpriteBatch2D,
+    pub batch_tex_srv: TextureInfo,
+    pub shape_batch: ShapeBatch2D,
+    pub tiles: Vec<Tile>,
+    pub camera: Camera2D,
+    pub hovered_tile: Option<usize>,
+    pub grid_spacing: f32,
 }
 
-struct Tile {
+pub struct Tile {
     pos: Vec2,
     vel: Vec2,
     rot: f32,
@@ -73,50 +68,88 @@ struct Tile {
 }
 
 #[derive(Default)]
-struct State {
-    // SpriteBatch2D
-    batch: Option<SpriteBatch2D>,
-    tiles: Vec<Tile>,
-    batch_tex_srv: Option<TextureInfo>,
+pub struct App {
+    pub window_pos: (i32, i32),
+    pub window_size: (u32, u32),
 
-    // ShapeBatch2D (grid + cursor circle + collider outlines)
-    shape_batch: Option<ShapeBatch2D>,
+    pub keyboard_input: keyboard_input::KeyboardInput,
+    pub mouse_input: mouse_input::MouseInput,
 
-    // Camera
-    camera: Option<Camera2D>,
+    pub sounds: HashMap<String, StaticSoundData>,
 
-    // Hover state
-    hovered_tile: Option<usize>,
-
+    pub timer: timer::Timer,
+    pub ctx: Option<AppContext>,
 }
 
-impl State {
-    fn new(gfx: &D3D11, window_size: Vec2) -> Result<Self> {
-        // Load texture from seth.png
+#[allow(unused)]
+macro_rules! key_pressed {
+    ($self:expr, $key:expr) => {
+        $self.keyboard_input.get_key_state($key).is_pressed()
+    };
+}
+
+#[allow(unused)]
+macro_rules! key_state {
+    ($self:expr, $key:expr) => {
+        $self.keyboard_input.get_key_state($key)
+    };
+}
+
+impl App {
+    pub fn on_init(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) -> Result<()> {
+        // ── Window & GPU ───────────────────────────────────────
+        let window = event_loop
+            .create_window(WindowAttributes::default().with_title("KrisuRJW"))
+            .unwrap_or_else(|e| panic!("window::create: {:#}", e));
+        let gfx = D3D11::init_on_window(&window)
+            .unwrap_or_else(|e| panic!("gfx::init: {:#}", e));
+
+        // ── Audio ──────────────────────────────────────────────
+        let audio_mgr =
+            AudioManager::<DefaultBackend>::new(Default::default())
+                .context("AudioManager::new failed")?;
+
+        macro_rules! insert_snd {
+            ($name:expr, $dir:expr) => {
+                self.sounds.insert($name.to_string(),
+                    StaticSoundData::from_cursor(Cursor::new(include_bytes!($dir)))?);
+            };
+        }
+        insert_snd!("snd_ominous_cancel", "../snd_ominous_cancel.wav");
+        insert_snd!("snd_ominous", "../snd_ominous.wav");
+
+        // ── Texture ────────────────────────────────────────────
         let img = image::load_from_memory(include_bytes!("../seth.png"))
             .context("failed to load seth.png")?;
-
-        // ── SpriteBatch2D test ──────────────────────────────────
         let tex_info = load_texture_from_dynamic_image(&gfx.device, &img)?;
         println!("Seth.png: {:?}", tex_info);
         let tw = tex_info.width as f32;
         let th = tex_info.height as f32;
+        let cell_w = tw / 4.0;
+        let cell_h = th / 6.0;
 
-        let batch = SpriteBatch2D::new(&gfx.device, 2048)?;
+        // ── Batches ────────────────────────────────────────────
+        let batch = SpriteBatch2D::new(
+            &gfx.device, 2048,
+            &gfx.states.vs_puc_m_2d,
+            &gfx.states.ps_tex_rgba_2d,
+            &gfx.states.input_layout_puc,
+        )?;
+        let shape_batch = ShapeBatch2D::new(
+            &gfx.device, 4096,
+            &gfx.states.vs_puc_m_2d,
+            &gfx.states.ps_solid_2d,
+            &gfx.states.input_layout_puc,
+        )?;
 
+        // ── Tiles ──────────────────────────────────────────────
         let mut tiles = Vec::new();
-        let num_tiles = 24;
-        let cols = 4;
-        let cell_w = tw / cols as f32;
-        let cell_h = th / (num_tiles / cols) as f32;
-
-        for i in 0..num_tiles {
-            let cx = (i % cols) as f32 * cell_w;
-            let cy = (i / cols) as f32 * cell_h;
+        for i in 0..24 {
+            let cx = (i % 4) as f32 * cell_w;
+            let cy = (i / 4) as f32 * cell_h;
             let angle = i as f32 * 1.3;
-
-            let col = (i % cols) as f32;
-            let row = (i / cols) as f32;
+            let col = (i % 4) as f32;
+            let row = (i / 4) as f32;
 
             tiles.push(Tile {
                 pos: Vec2::new((col - 1.5) * 150.0, (row - 2.5) * 150.0),
@@ -125,7 +158,7 @@ impl State {
                     (i as f32 * 1.1).sin() * 200.0,
                 ),
                 rot: 0.0,
-                rot_vel: (i as f32 * 0.5).cos() * 2.0,
+                rot_vel: ((i as f32 * 0.5).cos() * 2.0).abs(),
                 scale: 0.2 + (i % 3) as f32 * 0.08,
                 sprite_rect: Sprite {
                     origin_px: Vec2::new(cell_w / 2.0, cell_h / 2.0),
@@ -145,148 +178,9 @@ impl State {
             });
         }
 
-        // ShapeBatch2D used for grid, cursor circle, and collider outlines.
-        let shape_batch = ShapeBatch2D::new(&gfx.device, 4096)?;
-
-        Ok(Self {
-            batch: Some(batch),
-            tiles,
-            batch_tex_srv: Some(tex_info),
-            shape_batch: Some(shape_batch),
-            camera: Some(Camera2D::new(window_size)),
-            hovered_tile: None,
-        })
-    }
-}
-
-#[allow(unused)]
-macro_rules! key_pressed {
-    ($self:expr, $key:expr) => {
-        $self.keyboard_input.get_key_state($key).is_pressed()
-    };
-}
-
-#[allow(unused)]
-macro_rules! key_state {
-    ($self:expr, $key:expr) => {
-        $self.keyboard_input.get_key_state($key)
-    };
-}
-
-/// Build grid lines within the culling square and store them in `sb`.
-fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, grid_spacing: f32, grid_color: [f32; 4]) {
-    let hw = camera.viewport_size.x * 0.5 * camera.zoom.x;
-    let hh = camera.viewport_size.y * 0.5 * camera.zoom.y;
-    let half_side = (hw * hw + hh * hh).sqrt();
-
-    let cx = camera.position.x;
-    let cy = camera.position.y;
-
-    let min_x = ((cx - half_side) / grid_spacing).floor() * grid_spacing;
-    let max_x = ((cx + half_side) / grid_spacing).ceil() * grid_spacing;
-    let min_y = ((cy - half_side) / grid_spacing).floor() * grid_spacing;
-    let max_y = ((cy + half_side) / grid_spacing).ceil() * grid_spacing;
-
-    // Clamp to a sane max to avoid blowing up the batch
-    let max_lines = 500;
-    let num_x = ((max_x - min_x) / grid_spacing) as usize;
-    let num_y = ((max_y - min_y) / grid_spacing) as usize;
-    if num_x > max_lines || num_y > max_lines {
-        return;
-    }
-
-    // Vertical lines
-    let mut x = min_x;
-    let shadow_offset = Vec2 { x: 5.0, y: 5.0};
-    while x <= max_x {
-        let from = Vec2::new(x, min_y);
-        let to = Vec2::new(x, max_y);
-        sb.add_square_line(
-            from + shadow_offset,
-            to + shadow_offset,
-            10.0,
-            [0.0, 0.0, 0.0, 0.2],
-        );
-        sb.add_square_line(
-            from,
-            to,
-            10.0,
-            grid_color,
-        );
-        x += grid_spacing;
-    }
-
-    // Horizontal lines
-    let mut y = min_y;
-    while y <= max_y {
-        let from  = Vec2::new(min_x, y);
-        let to = Vec2::new(max_x, y);
-        sb.add_square_line(
-            from + shadow_offset,
-            to + shadow_offset,
-            10.0,
-            [0.0, 0.0, 0.0, 0.2],
-        );
-        sb.add_square_line(
-            from,
-            to,
-            10.0,
-            grid_color,
-        );
-        y += grid_spacing;
-    }
-}
-
-/// Draw a collider outline using the ShapeBatch2D.
-fn draw_collider_outline(sb: &mut ShapeBatch2D, inst: &ColliderInstance, color: [f32; 4]) {
-    match inst.shape {
-        Collider::Rect { half_size } | Collider::AABB { half_size } => {
-            let h = if matches!(inst.shape, Collider::AABB { .. }) {
-                *half_size * inst.xform.scale
-            } else {
-                *half_size
-            };
-            // Four corners in local space
-            let local = [
-                Vec2::new(-h.x, -h.y),
-                Vec2::new(h.x, -h.y),
-                Vec2::new(h.x, h.y),
-                Vec2::new(-h.x, h.y),
-            ];
-            // Transform to world space
-            let mut world = [Vec2::ZERO; 4];
-            for (i, lc) in local.iter().enumerate() {
-                world[i] = inst.xform.transform_point(*lc);
-            }
-            // Four line segments
-            for i in 0..4 {
-                let from = world[i];
-                let to = world[(i + 1) % 4];
-                sb.add_square_line(from, to, 3.0, color);
-            }
-        }
-        Collider::Circle { radius } => {
-            let r = radius * inst.xform.scale.x.max(inst.xform.scale.y);
-            sb.add_circle(inst.xform.pos, r, color, 24);
-        }
-    }
-}
-
-impl App {
-    fn on_init(&mut self) -> Result<()> {
-        let gfx = self.gfx.as_ref().context("App not initialized")?;
+        // ── Camera ─────────────────────────────────────────────
         let ws = Vec2::new(self.window_size.0 as f32, self.window_size.1 as f32);
-        self.state = Some(State::new(gfx, ws).context("State::new failed")?);
-
-        let audio_mgr = AudioManager::<DefaultBackend>::new(Default::default()).context("AudioManager::<DefaultBackend>::new failed")?;
-        self.audio_mgr = Some(audio_mgr);
-        macro_rules! insert_snd {
-            ($name:expr, $dir:expr) => {
-                self.sounds.insert($name.to_string(), StaticSoundData::from_cursor(Cursor::new(include_bytes!($dir)))?);
-            };
-        }
-        insert_snd!("snd_ominous_cancel", "../snd_ominous_cancel.wav");
-        insert_snd!("snd_ominous", "../snd_ominous.wav");
+        let camera = Camera2D::new(ws);
 
         println!("赛博吸尘器 with Seth.png");
         println!("    ---- 🔪Aqua's idea");
@@ -296,21 +190,33 @@ impl App {
         println!("  - 鼠标滚轮缩放相机");
         println!("  - 鼠标左键吸引图块");
         println!("  - X 键强力制动");
+
+        self.ctx = Some(AppContext {
+            window,
+            gfx,
+            audio_mgr,
+            batch,
+            batch_tex_srv: tex_info,
+            shape_batch,
+            tiles,
+            camera,
+            hovered_tile: None,
+            grid_spacing: GRID_SPACING,
+        });
         Ok(())
     }
-    fn on_frame(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) -> Result<()> {
-        let window = self.window.as_ref().unwrap();
-        let gfx = self.gfx.as_ref().unwrap();
-        let state = self.state.as_mut().unwrap();
-        let audio_mgr = self.audio_mgr.as_mut().unwrap();
+
+    pub fn on_frame(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) -> Result<()> {
+        let ctx = self.ctx.as_mut().unwrap();
+        let gfx = &ctx.gfx;
+        let camera = &mut ctx.camera;
 
         let w = self.window_size.0 as f32;
         let h = self.window_size.1 as f32;
         let dt = self.timer.pre_frame_and_get_delta_time() as f32;
         let dt = if dt > 0.1 { 0.1 } else { dt };
 
-        // ── Camera controls ───────────────────────────────────
-        let camera = state.camera.as_mut().unwrap();
+        // ── Camera viewport ────────────────────────────────────
         camera.viewport_pos = Vec2::splat(0.0f32);
         camera.viewport_size = Vec2::new(w, h);
 
@@ -318,15 +224,9 @@ impl App {
         let rot_speed = 2.0;
         let zoom_speed: f32 = 25.0;
 
-        // Rotation
-        if key_pressed!(self, KeyCode::KeyQ) {
-            camera.rotation -= rot_speed * dt;
-        }
-        if key_pressed!(self, KeyCode::KeyE) {
-            camera.rotation += rot_speed * dt;
-        }
+        if key_pressed!(self, KeyCode::KeyQ) { camera.rotation -= rot_speed * dt; }
+        if key_pressed!(self, KeyCode::KeyE) { camera.rotation += rot_speed * dt; }
 
-        // Zoom (exponential, frame-rate independent)
         if self.mouse_input.get_mouse_wheel_delta().1 > 0.0 {
             camera.zoom *= zoom_speed.powf(dt);
         }
@@ -334,21 +234,12 @@ impl App {
             camera.zoom /= zoom_speed.powf(dt);
         }
 
-        // Movement (relative to camera rotation)
         let (sin_rot, cos_rot) = camera.rotation.sin_cos();
         let mut move_dir = Vec2::ZERO;
-        if key_pressed!(self, KeyCode::KeyD) {
-            move_dir += Vec2::new(cos_rot, sin_rot);
-        }
-        if key_pressed!(self, KeyCode::KeyA) {
-            move_dir -= Vec2::new(cos_rot, sin_rot);
-        }
-        if key_pressed!(self, KeyCode::KeyW) {
-            move_dir -= Vec2::new(-sin_rot, cos_rot);
-        }
-        if key_pressed!(self, KeyCode::KeyS) {
-            move_dir += Vec2::new(-sin_rot, cos_rot);
-        }
+        if key_pressed!(self, KeyCode::KeyD) { move_dir += Vec2::new(cos_rot, sin_rot); }
+        if key_pressed!(self, KeyCode::KeyA) { move_dir -= Vec2::new(cos_rot, sin_rot); }
+        if key_pressed!(self, KeyCode::KeyW) { move_dir -= Vec2::new(-sin_rot, cos_rot); }
+        if key_pressed!(self, KeyCode::KeyS) { move_dir += Vec2::new(-sin_rot, cos_rot); }
         if move_dir.length_squared() > 0.0 {
             camera.position += move_dir.normalize() * move_speed * dt;
         }
@@ -363,47 +254,44 @@ impl App {
             .get_mouse_button_state(MouseButton::Left)
             .is_pressed();
 
+        let audio_mgr = &mut ctx.audio_mgr;
+
         if key_state!(self, KeyCode::KeyX).is_down_true_edge() {
-            if let Some(falling_snd) = self.sounds.get("snd_ominous_cancel") {
-                audio_mgr.play(falling_snd.clone().volume(0.0)).unwrap();
+            if let Some(snd) = self.sounds.get("snd_ominous_cancel") {
+                audio_mgr.play(snd.clone().volume(0.0)).unwrap();
             }
         }
         if self
             .mouse_input
             .get_mouse_button_state(MouseButton::Left)
-            .is_down_edge() {
-                if let Some(snd) = self.sounds.get("snd_ominous") {
-                    audio_mgr.play(snd.clone().volume(0.0)).unwrap();
-                }
+            .is_down_edge()
+        {
+            if let Some(snd) = self.sounds.get("snd_ominous") {
+                audio_mgr.play(snd.clone().volume(0.0)).unwrap();
             }
+        }
 
-        // ── Tile physics + hover detection ─────────────────────
-        state.hovered_tile = None;
-        for (idx, tile) in state.tiles.iter_mut().enumerate().rev() {
+        // ── Tile physics + hover ───────────────────────────────
+        ctx.hovered_tile = None;
+        for (idx, tile) in ctx.tiles.iter_mut().enumerate().rev() {
             tile.pos += tile.vel * dt;
             tile.rot += tile.rot_vel * dt;
 
             if lmb_pressed {
-                let distance_to_cursor = world_mouse - tile.pos;
-                let x = distance_to_cursor.length();
-                let a = x.sqrt();
-                let a = distance_to_cursor / x * a;
+                let d = world_mouse - tile.pos;
+                let len = d.length();
+                let a = len.sqrt();
+                let a = d / len * a;
                 tile.vel += a;
             }
 
-            let f: f32 = if key_pressed!(self, KeyCode::KeyX) {
-                10.0
-            } else {
-                0.1
-            };
+            let f: f32 = if key_pressed!(self, KeyCode::KeyX) { 10.0 } else { 0.1 };
             let len_sqr = tile.vel.length_squared();
             if len_sqr > 25.0 {
-                let a = -tile.vel * f / len_sqr.sqrt();
-                tile.vel += a;
+                tile.vel += -tile.vel * f / len_sqr.sqrt();
             }
 
-            // Hover detection
-            let tile_inst = ColliderInstance {
+            let inst = ColliderInstance {
                 shape: &tile.collider,
                 xform: Transform2D {
                     pos: tile.pos,
@@ -411,24 +299,16 @@ impl App {
                     rot: tile.rot,
                 },
             };
-            if tile_inst.contains_point(world_mouse) && state.hovered_tile.is_none() {
-                state.hovered_tile = Some(idx);
+            if inst.contains_point(world_mouse) && ctx.hovered_tile.is_none() {
+                ctx.hovered_tile = Some(idx);
             }
         }
 
-        window.set_title(
-            format!(
-                "KrisuRJW - FPS: {:.2} dTime: {:.05}",
-                self.timer.get_fps(),
-                dt
-            )
-            .as_str(),
+        ctx.window.set_title(
+            format!("KrisuRJW - FPS: {:.2} dTime: {:.05}", self.timer.get_fps(), dt).as_str(),
         );
 
-        // -------------------------
-        // Render Stage
-        // -------------------------
-
+        // ── Render ─────────────────────────────────────────────
         if self.window_size.0 > 0 && self.window_size.1 > 0 {
             unsafe {
                 gfx.imm_context
@@ -442,90 +322,147 @@ impl App {
             }
 
             gfx.clear_screen(&[0.8, 0.8, 0.8, 1.0]);
-
             let vp_transposed = camera.vp_matrix().transpose();
 
-            // ── Grid background ──────────────────────────────────
-            if let Some(sb) = state.shape_batch.as_mut() {
-                sb.clear_batch();
-                build_grid(sb, camera, GRID_SPACING, GRID_COLOR);
-                sb.set_mvp(gfx, &vp_transposed);
-                sb.submit_and_draw(gfx)
-                    .context("grid submit_and_draw failed")?;
-                sb.clear_batch();
+            // Grid
+            let sb = &mut ctx.shape_batch;
+            sb.clear_batch();
+            build_grid(sb, camera, ctx.grid_spacing, GRID_COLOR);
+            sb.set_mvp(gfx, &vp_transposed);
+            sb.submit_and_draw(gfx).context("grid submit_and_draw failed")?;
+            sb.clear_batch();
+
+            // Tiles
+            let batch = &mut ctx.batch;
+            batch.clear_batch();
+            batch.set_texture(
+                ctx.batch_tex_srv.srv.clone(),
+                ctx.batch_tex_srv.width,
+                ctx.batch_tex_srv.height,
+            );
+            for tile in &ctx.tiles {
+                batch
+                    .add(
+                        tile.pos + Vec2::new(5.0, 5.0),
+                        Vec2::splat(tile.scale), tile.rot,
+                        &tile.sprite_rect, [0.0, 0.0, 0.0, 0.2],
+                    )
+                    .unwrap_or_else(|_| ());
+                batch
+                    .add(tile.pos, Vec2::splat(tile.scale), tile.rot,
+                         &tile.sprite_rect, tile.color,
+                    )
+                    .unwrap_or_else(|_| ());
             }
+            batch.set_mvp(gfx, &vp_transposed);
+            batch.submit_and_draw(gfx).context("batch.submit_and_draw failed")?;
+            batch.clear_batch();
 
-            // ── Tiles (SpriteBatch2D) ────────────────────────────
-            if let Some(batch) = state.batch.as_mut() {
-                if let Some(tex) = state.batch_tex_srv.as_ref() {
-                    batch.clear_batch();
-                    batch.set_texture(tex.srv.clone(), tex.width, tex.height);
-
-                    for tile in &state.tiles {
-                        batch
-                            .add(
-                                tile.pos + Vec2 { x: 5.0, y: 5.0 },
-                                Vec2::splat(tile.scale),
-                                tile.rot,
-                                &tile.sprite_rect,
-                                [0.0, 0.0, 0.0, 0.2],
-                            )
-                            .unwrap_or_else(|_| ());
-                        batch
-                            .add(
-                                tile.pos,
-                                Vec2::splat(tile.scale),
-                                tile.rot,
-                                &tile.sprite_rect,
-                                tile.color,
-                            )
-                            .unwrap_or_else(|_| ());
-                    }
-
-                    batch.set_mvp(gfx, &vp_transposed);
-                    batch
-                        .submit_and_draw(gfx)
-                        .context("batch.submit_and_draw failed")?;
-                    batch.clear_batch();
-                }
+            // Collider outlines + cursor circle
+            let sb = &mut ctx.shape_batch;
+            sb.clear_batch();
+            for (idx, tile) in ctx.tiles.iter().enumerate() {
+                let inst = ColliderInstance {
+                    shape: &tile.collider,
+                    xform: Transform2D {
+                        pos: tile.pos,
+                        scale: Vec2::splat(tile.scale),
+                        rot: tile.rot,
+                    },
+                };
+                let color = if Some(idx) == ctx.hovered_tile {
+                    [1.0, 0.8, 0.0, 0.8]
+                } else {
+                    [0.0, 1.0, 0.0, 0.3]
+                };
+                draw_collider_outline(sb, &inst, color);
             }
-
-            // ── Collider outlines + cursor circle ─────────────────
-            if let Some(sb) = state.shape_batch.as_mut() {
-                sb.clear_batch();
-
-                // Draw all tile colliders
-                for (idx, tile) in state.tiles.iter().enumerate() {
-                    let inst = ColliderInstance {
-                        shape: &tile.collider,
-                        xform: Transform2D {
-                            pos: tile.pos,
-                            scale: Vec2::splat(tile.scale),
-                            rot: tile.rot,
-                        },
-                    };
-                    let color = if Some(idx) == state.hovered_tile {
-                        [1.0, 0.8, 0.0, 0.8] // yellow highlight
-                    } else {
-                        [0.0, 1.0, 0.0, 0.3] // green dim
-                    };
-                    draw_collider_outline(sb, &inst, color);
-                }
-
-                // Cursor circle
-                if lmb_pressed {
-                    sb.add_circle(world_mouse, 30.0, [1.0, 1.0, 1.0, 0.3], 24);
-                }
-
-                sb.set_mvp(gfx, &vp_transposed);
-                sb.submit_and_draw(gfx)
-                    .context("shape_batch submit_and_draw failed")?;
-                sb.clear_batch();
+            if lmb_pressed {
+                sb.add_circle_no_uv(world_mouse, 30.0, [1.0, 1.0, 1.0, 0.3], 24);
             }
+            sb.set_mvp(gfx, &vp_transposed);
+            sb.submit_and_draw(gfx).context("shape_batch submit_and_draw failed")?;
+            sb.clear_batch();
         }
 
         gfx.present().context("gfx::present failed")?;
         self.timer.post_frame_fpsc();
         Ok(())
+    }
+}
+
+
+fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, spacing: f32, color: [f32; 4]) {
+    let hw = camera.viewport_size.x * 0.5 * camera.zoom.x;
+    let hh = camera.viewport_size.y * 0.5 * camera.zoom.y;
+    let half_side = (hw * hw + hh * hh).sqrt();
+    let cx = camera.position.x;
+    let cy = camera.position.y;
+
+    let min_x = ((cx - half_side) / spacing).floor() * spacing;
+    let max_x = ((cx + half_side) / spacing).ceil() * spacing;
+    let min_y = ((cy - half_side) / spacing).floor() * spacing;
+    let max_y = ((cy + half_side) / spacing).ceil() * spacing;
+
+    let max_lines = 500;
+    if ((max_x - min_x) / spacing) as usize > max_lines
+        || ((max_y - min_y) / spacing) as usize > max_lines
+    {
+        return;
+    }
+
+    let shadow = Vec2::new(5.0, 5.0);
+
+    let mut x = min_x;
+    while x <= max_x {
+        for (off, col) in [(&shadow, [0.0, 0.0, 0.0, 0.2]), (&Vec2::ZERO, color)] {
+            sb.add_square_line_no_uv(
+                Vec2::new(x, min_y) + *off,
+                Vec2::new(x, max_y) + *off,
+                10.0, col,
+            );
+        }
+        x += spacing;
+    }
+
+    let mut y = min_y;
+    while y <= max_y {
+        for (off, col) in [(&shadow, [0.0, 0.0, 0.0, 0.2]), (&Vec2::ZERO, color)] {
+            sb.add_square_line_no_uv(
+                Vec2::new(min_x, y) + *off,
+                Vec2::new(max_x, y) + *off,
+                10.0, col,
+            );
+        }
+        y += spacing;
+    }
+}
+
+fn draw_collider_outline(sb: &mut ShapeBatch2D, inst: &ColliderInstance, color: [f32; 4]) {
+    match inst.shape {
+        Collider::Rect { half_size } | Collider::AABB { half_size } => {
+            let h = if matches!(inst.shape, Collider::AABB { .. }) {
+                *half_size * inst.xform.scale
+            } else {
+                *half_size
+            };
+            let local = [
+                Vec2::new(-h.x, -h.y),
+                Vec2::new(h.x, -h.y),
+                Vec2::new(h.x, h.y),
+                Vec2::new(-h.x, h.y),
+            ];
+            let mut world = [Vec2::ZERO; 4];
+            for (i, lc) in local.iter().enumerate() {
+                world[i] = inst.xform.transform_point(*lc);
+            }
+            for i in 0..4 {
+                sb.add_square_line_no_uv(world[i], world[(i + 1) % 4], 3.0, color);
+            }
+        }
+        Collider::Circle { radius } => {
+            let r = radius * inst.xform.scale.x.max(inst.xform.scale.y);
+            sb.add_circle_no_uv(inst.xform.pos, r, color, 24);
+        }
     }
 }

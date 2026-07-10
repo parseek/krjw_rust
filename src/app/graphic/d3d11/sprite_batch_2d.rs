@@ -6,7 +6,7 @@ use windows::{
 };
 
 use super::D3D11;
-use super::d3d11_utils::{self, create_input_layout, write_buffer};
+use super::d3d11_utils::{self, write_buffer};
 
 /// Describes the source rectangle of a sprite (in pixels).
 #[allow(unused)]
@@ -34,44 +34,6 @@ struct CbWorld {
 }
 
 #[allow(unused)]
-const INPUT_LAYOUT_DESC: [D3D11_INPUT_ELEMENT_DESC; 3] = [
-    D3D11_INPUT_ELEMENT_DESC {
-        SemanticName: PCSTR(b"POSITION\0".as_ptr()),
-        SemanticIndex: 0,
-        Format: DXGI_FORMAT_R32G32_FLOAT,
-        InputSlot: 0,
-        AlignedByteOffset: 0,
-        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-        InstanceDataStepRate: 0,
-    },
-    D3D11_INPUT_ELEMENT_DESC {
-        SemanticName: PCSTR(b"TEXCOORD\0".as_ptr()),
-        SemanticIndex: 0,
-        Format: DXGI_FORMAT_R32G32_FLOAT,
-        InputSlot: 0,
-        AlignedByteOffset: 8,
-        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-        InstanceDataStepRate: 0,
-    },
-    D3D11_INPUT_ELEMENT_DESC {
-        SemanticName: PCSTR(b"COLOR\0".as_ptr()),
-        SemanticIndex: 0,
-        Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
-        InputSlot: 0,
-        AlignedByteOffset: 16,
-        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-        InstanceDataStepRate: 0,
-    },
-];
-
-#[derive(Debug)]
-struct Texture {
-    texture_srv: ID3D11ShaderResourceView,
-    tex_width: u32,
-    tex_height: u32,
-}
-
-#[allow(unused)]
 pub struct SpriteBatch2D {
     vertex_shader: ID3D11VertexShader,
     pixel_shader: ID3D11PixelShader,
@@ -81,7 +43,7 @@ pub struct SpriteBatch2D {
     index_buffer: ID3D11Buffer,
     cb_world: ID3D11Buffer,
 
-    texture: Option<Texture>,
+    texture: Option<(ID3D11ShaderResourceView, u32, u32)>,
 
     capacity: usize,
     vertices: Vec<[SpriteVertex2D; 4]>,
@@ -92,22 +54,16 @@ pub struct SpriteBatch2D {
 
 #[allow(unused)]
 impl SpriteBatch2D {
-    pub fn new(device: &ID3D11Device, capacity: usize) -> Result<Self> {
+    pub fn new(
+        device: &ID3D11Device,
+        capacity: usize,
+        vs: &ID3D11VertexShader,
+        ps: &ID3D11PixelShader,
+        input_layout: &ID3D11InputLayout,
+    ) -> Result<Self> {
         if capacity > (0xffff / 4) {
             return Err(Error::msg("capacity out of range"));
         }
-
-        let vs_blob = d3d11_utils::compile_shader(
-            include_bytes!("sprite_batch_2d_vs.hlsl"),
-            PCSTR(b"main\0".as_ptr()),
-            PCSTR(b"vs_5_0\0".as_ptr()),
-        )?;
-
-        let vertex_shader =
-            d3d11_utils::create_vs(device, include_bytes!("sprite_batch_2d_vs.hlsl"))?;
-        let pixel_shader =
-            d3d11_utils::create_ps(device, include_bytes!("sprite_batch_2d_ps.hlsl"))?;
-        let input_layout = create_input_layout(device, &INPUT_LAYOUT_DESC, &vs_blob)?;
 
         let vb_stride = std::mem::size_of::<SpriteVertex2D>() as u32;
         let vertex_buffer = d3d11_utils::create_dynamic_buffer(
@@ -131,9 +87,9 @@ impl SpriteBatch2D {
         let cb_world = d3d11_utils::create_constant_buffer::<CbWorld>(device)?;
 
         Ok(Self {
-            vertex_shader,
-            pixel_shader,
-            input_layout,
+            vertex_shader: vs.clone(),
+            pixel_shader: ps.clone(),
+            input_layout: input_layout.clone(),
             vertex_buffer,
             index_buffer,
             cb_world,
@@ -156,11 +112,15 @@ impl SpriteBatch2D {
         tex_width: u32,
         tex_height: u32,
     ) {
-        self.texture = Some(Texture {
-            texture_srv,
-            tex_width,
-            tex_height,
-        });
+        self.texture = Some((texture_srv, tex_width, tex_height));
+    }
+
+    pub fn set_vertex_shader(&mut self, vs: ID3D11VertexShader) {
+        self.vertex_shader = vs;
+    }
+
+    pub fn set_pixel_shader(&mut self, ps: ID3D11PixelShader) {
+        self.pixel_shader = ps;
     }
 
     /// Add one sprite. Transform = rotate → scale → translate.
@@ -172,7 +132,8 @@ impl SpriteBatch2D {
         sprite: &Sprite,
         color: [f32; 4],
     ) -> Result<()> {
-        let tex = self.texture.as_ref().context("No texture")?;
+        let (tex_srv, tex_width, tex_height) =
+            self.texture.as_ref().context("No texture set")?;
 
         let Sprite {
             origin_px,
@@ -182,8 +143,8 @@ impl SpriteBatch2D {
         } = *sprite;
 
         let (sin, cos) = rot.sin_cos();
-        let tw = tex.tex_width as f32;
-        let th = tex.tex_height as f32;
+        let tw = *tex_width as f32;
+        let th = *tex_height as f32;
         let u0 = uv_tl_px.x / tw;
         let v0 = uv_tl_px.y / th;
         let u1 = (uv_tl_px.x + uv_size_px.x) / tw;
@@ -206,10 +167,10 @@ impl SpriteBatch2D {
         }; 4];
 
         for i in 0..4 {
-            let lx = corners[i][0];
-            let ly = corners[i][1];
-            let fx = (lx * cos - ly * sin) * scale.x + pos.x;
-            let fy = (lx * sin + ly * cos) * scale.y + pos.y;
+            let lx = corners[i][0] * scale.x;
+            let ly = corners[i][1] * scale.y;
+            let fx = (lx * cos - ly * sin) + pos.x;
+            let fy = (lx * sin + ly * cos) + pos.y;
 
             quad[i] = SpriteVertex2D {
                 pos: [fx, fy],
@@ -229,7 +190,7 @@ impl SpriteBatch2D {
     }
 
     pub fn submit_and_draw(&mut self, gfx: &D3D11) -> Result<()> {
-        let tex = self.texture.as_ref().context("No texture")?;
+        let (tex_srv, ..) = self.texture.as_ref().context("No texture set")?;
 
         let total = self.vertices.len();
         if total == 0 {
@@ -260,7 +221,7 @@ impl SpriteBatch2D {
             context.VSSetConstantBuffers(0, Some(&[Some(self.cb_world.clone())]));
             context.VSSetShader(&self.vertex_shader, None);
             context.PSSetShader(&self.pixel_shader, None);
-            context.PSSetShaderResources(0, Some(&[Some(tex.texture_srv.clone())]));
+            context.PSSetShaderResources(0, Some(&[Some(tex_srv.clone())]));
 
             context.OMSetRenderTargets(Some(&[Some(rtv.clone())]), Some(dsv));
         }
@@ -269,19 +230,17 @@ impl SpriteBatch2D {
             for chunk_start in (0..total).step_by(self.capacity) {
                 let chunk_end = (chunk_start + self.capacity).min(total);
                 let chunk = &self.vertices[chunk_start..chunk_end];
-                let quad_count = chunk.len();
 
                 write_buffer(&gfx.imm_context, &self.vertex_buffer, chunk)
                     .unwrap_or_else(|e| panic!("sprite_batch_2d::submit failed: {:#}", e));
 
                 unsafe {
-                    context.DrawIndexed(6 * quad_count as u32, 0, 0);
+                    context.DrawIndexed(6 * chunk.len() as u32, 0, 0);
                 }
             }
         } else {
-            let quad_count = total as u32;
             unsafe {
-                context.DrawIndexed(6 * quad_count, 0, 0);
+                context.DrawIndexed(6 * total as u32, 0, 0);
             }
         }
 

@@ -1,6 +1,10 @@
 use anyhow::{Context, Result};
-use windows::Win32::Graphics::Direct3D11::*;
-use windows::Win32::Graphics::Dxgi::Common::*;
+use windows::{
+    Win32::Graphics::{Direct3D::*, Direct3D11::*, Dxgi::Common::*},
+    core::PCSTR,
+};
+
+use super::d3d11_utils;
 
 #[allow(unused)]
 #[derive(Debug)]
@@ -26,6 +30,13 @@ pub struct StateObjects {
 
     // Built-in 1×1 white texture (for solid-color rendering via SpriteBatch2D)
     pub white_texture_srv: ID3D11ShaderResourceView,
+
+    // Standard 2D shader resources (pos+uv+color vertex format)
+    pub vs_puc_m_2d: ID3D11VertexShader,
+    pub ps_solid_2d: ID3D11PixelShader,
+    pub ps_tex_rgba_2d: ID3D11PixelShader,
+    pub ps_tex_r8_2d: ID3D11PixelShader,
+    pub input_layout_puc: ID3D11InputLayout,
 }
 
 impl StateObjects {
@@ -254,10 +265,8 @@ impl StateObjects {
                 state.unwrap()
             };
 
-            // ── Built-in 1×1 white texture ───────────────────────────
+            // ── Built-in 1×1 white texture ─────────────────────────
             let white_texture_srv = {
-                use super::d3d11_utils;
-
                 let white_pixel: [u8; 4] = [255; 4];
                 let tex = d3d11_utils::create_texture_2d(
                     device,
@@ -274,6 +283,56 @@ impl StateObjects {
                     .context("create_white_srv failed")?
             };
 
+            // ── Standard 2D shaders ────────────────────────────────
+            let vs_blob = d3d11_utils::compile_shader(
+                include_bytes!("shaders/vs_puc_m_2d.hlsl"),
+                PCSTR(b"main\0".as_ptr()),
+                PCSTR(b"vs_5_0\0".as_ptr()),
+            )
+            .context("compile vs_puc_m_2d failed")?;
+
+            let vs_puc_m_2d = d3d11_utils::create_vs(device, include_bytes!("shaders/vs_puc_m_2d.hlsl"))?;
+            let ps_solid_2d = d3d11_utils::create_ps(device, include_bytes!("shaders/ps_solid_2d.hlsl"))?;
+            let ps_tex_rgba_2d = d3d11_utils::create_ps(device, include_bytes!("shaders/ps_tex_rgba_2d.hlsl"))?;
+            let ps_tex_r8_2d = d3d11_utils::create_ps(device, include_bytes!("shaders/ps_tex_r8_2d.hlsl"))?;
+
+            const INPUT_LAYOUT_PUC: [D3D11_INPUT_ELEMENT_DESC; 3] = [
+                D3D11_INPUT_ELEMENT_DESC {
+                    SemanticName: PCSTR(b"POSITION\0".as_ptr()),
+                    SemanticIndex: 0,
+                    Format: DXGI_FORMAT_R32G32_FLOAT,
+                    InputSlot: 0,
+                    AlignedByteOffset: 0,
+                    InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                    InstanceDataStepRate: 0,
+                },
+                D3D11_INPUT_ELEMENT_DESC {
+                    SemanticName: PCSTR(b"TEXCOORD\0".as_ptr()),
+                    SemanticIndex: 0,
+                    Format: DXGI_FORMAT_R32G32_FLOAT,
+                    InputSlot: 0,
+                    AlignedByteOffset: 8,
+                    InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                    InstanceDataStepRate: 0,
+                },
+                D3D11_INPUT_ELEMENT_DESC {
+                    SemanticName: PCSTR(b"COLOR\0".as_ptr()),
+                    SemanticIndex: 0,
+                    Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+                    InputSlot: 0,
+                    AlignedByteOffset: 16,
+                    InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                    InstanceDataStepRate: 0,
+                },
+            ];
+
+            let input_layout_puc = d3d11_utils::create_input_layout(
+                device,
+                &INPUT_LAYOUT_PUC,
+                &vs_blob,
+            )
+            .context("create_input_layout_puc failed")?;
+
             Ok(Self {
                 blend_opaque,
                 blend_alpha,
@@ -287,6 +346,11 @@ impl StateObjects {
                 depth_none,
                 depth_less,
                 white_texture_srv,
+                vs_puc_m_2d,
+                ps_solid_2d,
+                ps_tex_rgba_2d,
+                ps_tex_r8_2d,
+                input_layout_puc,
             })
         }
     }

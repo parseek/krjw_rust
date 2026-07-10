@@ -1,26 +1,15 @@
 use anyhow::Context;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::window::WindowAttributes;
 
 use super::App;
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let window = event_loop
-            .create_window(WindowAttributes::default().with_title("KrisuRJW"))
-            .unwrap_or_else(|e| panic!("window::create: {:#}", e));
-        self.window = Some(window);
-
-        self.gfx = Some(
-            super::graphic::d3d11::D3D11::init_on_window(self.window.as_ref().unwrap())
-                .unwrap_or_else(|e| panic!("gfx::init: {:#}", e)),
-        );
-
         self.keyboard_input = super::keyboard_input::KeyboardInput::default();
         self.mouse_input = super::mouse_input::MouseInput::default();
 
-        self.on_init().unwrap_or_else(|e| {
+        self.on_init(event_loop).unwrap_or_else(|e| {
             panic!("App::on_init failed. Info: {:#}", e);
         });
     }
@@ -48,11 +37,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(size) => {
                 self.window_size = (size.width, size.height);
-                self.gfx
-                    .as_mut()
-                    .unwrap()
-                    .on_resize(size.width, size.height)
-                    .unwrap_or_else(|e| panic!("gfx::resize: {:#}", e));
+                if let Some(ctx) = self.ctx.as_mut() {
+                    ctx.gfx.on_resize(size.width, size.height)
+                        .unwrap_or_else(|e| panic!("gfx::resize: {:#}", e));
+                }
             }
             WindowEvent::Moved(pos) => {
                 self.window_pos = (pos.x, pos.y);
