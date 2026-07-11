@@ -7,16 +7,7 @@ use windows::{
 
 use super::D3D11;
 use super::d3d11_utils::{self, write_buffer};
-
-/// Describes the source rectangle of a sprite (in pixels).
-#[allow(unused)]
-#[derive(Copy, Clone)]
-pub struct Sprite {
-    pub origin_px: Vec2,
-    pub size_px: Vec2,
-    pub uv_tl_px: Vec2,
-    pub uv_size_px: Vec2,
-}
+use crate::app::sprite2d::Sprite2D;
 
 #[allow(unused)]
 #[derive(Copy, Clone)]
@@ -129,13 +120,13 @@ impl SpriteBatch2D {
         pos: Vec2,
         scale: Vec2,
         rot: f32,
-        sprite: &Sprite,
+        sprite: &Sprite2D,
         color: [f32; 4],
     ) -> Result<()> {
         let (tex_srv, tex_width, tex_height) =
             self.texture.as_ref().context("No texture set")?;
 
-        let Sprite {
+        let Sprite2D {
             origin_px,
             size_px,
             uv_tl_px,

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use glam::Vec2;
 use image::GenericImageView;
 use windows::{
     Win32::Graphics::{Direct3D::*, Direct3D11::*, Dxgi::Common::*},
@@ -272,6 +273,12 @@ pub struct TextureInfo {
     pub width: u32,
     pub height: u32,
     pub format: DXGI_FORMAT,
+}
+
+impl TextureInfo {
+    pub fn size_vec2f(&self) -> Vec2 {
+        Vec2 { x: self.width as f32, y: self.height as f32 }
+    }
 }
 
 /// Load a texture from a `DynamicImage`, automatically selecting the

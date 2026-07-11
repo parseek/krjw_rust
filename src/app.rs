@@ -2,6 +2,7 @@ use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::f64::consts::*;
 use std::io::Cursor;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use glam::Vec2;
@@ -16,7 +17,9 @@ use kira::{
 use graphic::d3d11::D3D11;
 use graphic::d3d11::d3d11_utils::*;
 use graphic::d3d11::shape_batch_2d::ShapeBatch2D;
-use graphic::d3d11::sprite_batch_2d::{Sprite, SpriteBatch2D};
+use graphic::d3d11::sprite_batch_2d::{SpriteBatch2D};
+
+use windows::Win32::Graphics::{Direct3D11::*, Dxgi::Common::*};
 
 #[allow(unused)]
 mod camera2d;
@@ -30,11 +33,17 @@ mod keyboard_input;
 mod mouse_input;
 #[allow(unused)]
 mod transform2d;
+#[allow(unused)]
+mod sprite2d;
 
 use camera2d::Camera2D;
 use collider::{Collider, ColliderInstance};
 use mouse_input::MouseButton;
 use transform2d::Transform2D;
+use sprite2d::Sprite2D;
+
+use crate::app::sprite2d::Sprite2DBuffer;
+use crate::app::sprite2d::Sprite2DObject;
 
 mod graphic;
 mod handler;
@@ -43,17 +52,30 @@ mod timer;
 const GRID_SPACING: f32 = 100.0;
 const GRID_COLOR: [f32; 4] = [0.15, 0.15, 0.15, 1.0];
 
+#[derive(Debug, Clone)]
+pub struct TextureInfoArced(Arc<TextureInfo>);
+
+impl sprite2d::HaveID for TextureInfoArced {
+    fn get_id(&self) -> u64 {
+        self.0.as_ref() as *const _ as u64
+    }
+}
+
 pub struct AppContext {
     pub window: winit::window::Window,
     pub gfx: D3D11,
     pub audio_mgr: AudioManager,
     pub batch: SpriteBatch2D,
-    pub batch_tex_srv: TextureInfo,
+    pub textures: HashMap<String, Arc<TextureInfo>>,
     pub shape_batch: ShapeBatch2D,
     pub tiles: Vec<Tile>,
     pub camera: Camera2D,
     pub hovered_tile: Option<usize>,
     pub grid_spacing: f32,
+    pub text_texture: TextureInfo,
+    pub text_batch: SpriteBatch2D,
+    pub text_sprite: Sprite2D,
+    pub sprite_buf: Sprite2DBuffer<TextureInfoArced, Transform2D>,
 }
 
 pub struct Tile {
@@ -62,7 +84,7 @@ pub struct Tile {
     rot: f32,
     rot_vel: f32,
     scale: f32,
-    sprite_rect: Sprite,
+    sprite_rect: Sprite2D,
     collider: Collider,
     color: [f32; 4],
 }
@@ -119,14 +141,26 @@ impl App {
         insert_snd!("snd_ominous", "../snd_ominous.wav");
 
         // ── Texture ────────────────────────────────────────────
+        let mut textures = HashMap::new();
         let img = image::load_from_memory(include_bytes!("../seth.png"))
             .context("failed to load seth.png")?;
         let tex_info = load_texture_from_dynamic_image(&gfx.device, &img)?;
         println!("Seth.png: {:?}", tex_info);
+
         let tw = tex_info.width as f32;
         let th = tex_info.height as f32;
         let cell_w = tw / 4.0;
         let cell_h = th / 6.0;
+
+        let tex_info = Arc::new(tex_info);
+        textures.insert("seth".to_string(), tex_info);
+
+        
+        let img = image::load_from_memory(include_bytes!("../seth2.png"))
+            .context("failed to load seth2.png")?;
+        let tex_info = load_texture_from_dynamic_image(&gfx.device, &img)?;
+        let tex_info = Arc::new(tex_info);
+        textures.insert("seth2".to_string(), tex_info);
 
         // ── Batches ────────────────────────────────────────────
         let batch = SpriteBatch2D::new(
@@ -160,7 +194,7 @@ impl App {
                 rot: 0.0,
                 rot_vel: ((i as f32 * 0.5).cos() * 2.0).abs(),
                 scale: 0.2 + (i % 3) as f32 * 0.08,
-                sprite_rect: Sprite {
+                sprite_rect: Sprite2D {
                     origin_px: Vec2::new(cell_w / 2.0, cell_h / 2.0),
                     size_px: Vec2::new(cell_w, cell_h),
                     uv_tl_px: Vec2::new(cx, cy),
@@ -191,17 +225,105 @@ impl App {
         println!("  - 鼠标左键吸引图块");
         println!("  - X 键强力制动");
 
+        // ── Text texture (cosmic-text → D3D11 texture) ─────────
+        use cosmic_text::{Attrs, Color, FontSystem, SwashCache, Buffer, Metrics, Shaping};
+
+        let mut font_system = FontSystem::new();
+        let mut swash_cache = SwashCache::new();
+        let metrics = Metrics::new(24.0, 32.0);
+        let mut buffer = Buffer::new(&mut font_system, metrics);
+        let mut buffer = buffer.borrow_with(&mut font_system);
+        let attrs = Attrs::new();
+        buffer.set_size(Some(800.0), Some(100.0));
+        buffer.set_text(
+            "Hello, Rust! 🦀\nKrisuRJW - Render to Texture 渲染到纹理 ✓\nゆっくりしていってね！！",
+            &attrs,
+            Shaping::Advanced,
+            None,
+        );
+
+        // Compute actual pixel dimensions from layout
+        let (mut tex_w, mut num_lines) = (0.0f32, 0u32);
+        for run in buffer.layout_runs() {
+            tex_w = tex_w.max(run.line_w);
+            num_lines += 1;
+        }
+        let line_height = 32.0; // matches Metrics::new(24.0, 32.0)
+        let tex_w = tex_w.ceil().max(1.0) as u32;
+        let tex_h = (num_lines as f32 * line_height).ceil().max(1.0) as u32;
+        println!("Text texture: {}x{} px", tex_w, tex_h);
+
+        // Allocate pixel buffer (pre-multiplied alpha, transparent background)
+        let mut pixels = vec![0u8; (tex_w * tex_h * 4) as usize];
+
+        let text_color = Color::rgb(0xFF, 0xFF, 0xFF);
+        buffer.draw(&mut swash_cache, text_color, |x, y, w, h, color| {
+            // Each callback is a small coverage rectangle of a glyph
+            for py in y..y + h as i32 {
+                for px in x..x + w as i32 {
+                    if px >= 0 && py >= 0 && (px as u32) < tex_w && (py as u32) < tex_h {
+                        let idx = ((py as u32 * tex_w + px as u32) * 4) as usize;
+                        // Pre-multiplied alpha: colour values already have alpha applied
+                        pixels[idx]     = color.r();
+                        pixels[idx + 1] = color.g();
+                        pixels[idx + 2] = color.b();
+                        pixels[idx + 3] = color.a();
+                    }
+                }
+            }
+        });
+
+        // Upload to GPU
+        let text_tex = create_texture_2d(
+            &gfx.device,
+            tex_w, tex_h,
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            D3D11_USAGE_DEFAULT,
+            0,
+            Some((&pixels, tex_w * 4)),
+        )?;
+        let text_srv = create_srv(&gfx.device, &text_tex, DXGI_FORMAT_R8G8B8A8_UNORM)?;
+        let text_texture = TextureInfo {
+            texture: text_tex,
+            srv: text_srv,
+            width: tex_w,
+            height: tex_h,
+            format: DXGI_FORMAT_R8G8B8A8_UNORM,
+        };
+
+        let text_sprite = Sprite2D {
+            origin_px: Vec2::ZERO,
+            size_px: Vec2::new(tex_w as f32, tex_h as f32),
+            uv_tl_px: Vec2::ZERO,
+            uv_size_px: Vec2::new(tex_w as f32, tex_h as f32),
+        };
+
+        // ── Text batch (separate small batch for HUD) ──────────
+        let text_batch = SpriteBatch2D::new(
+            &gfx.device, 64,
+            &gfx.states.vs_puc_m_2d,
+            &gfx.states.ps_tex_rgba_2d,
+            &gfx.states.input_layout_puc,
+        )?;
+
+        let sprite_buf = Sprite2DBuffer::default();
+
         self.ctx = Some(AppContext {
             window,
             gfx,
             audio_mgr,
             batch,
-            batch_tex_srv: tex_info,
+            textures,
             shape_batch,
             tiles,
             camera,
             hovered_tile: None,
             grid_spacing: GRID_SPACING,
+            text_texture,
+            text_batch,
+            text_sprite,
+            sprite_buf
         });
         Ok(())
     }
@@ -320,9 +442,131 @@ impl App {
                 gfx.imm_context
                     .PSSetSamplers(0, Some(&[Some(gfx.states.sampler_linear_clamp.clone())]));
             }
+            // Textures
+            let seth_tex = ctx.textures.get("seth").unwrap();
+            let seth2_tex = ctx.textures.get("seth2").unwrap();
+
+            // Batch
+            let batch = &mut ctx.batch;
+
+            // Buffer
+            let buf = &mut ctx.sprite_buf;
 
             gfx.clear_screen(&[0.8, 0.8, 0.8, 1.0]);
             let vp_transposed = camera.vp_matrix().transpose();
+
+            // Behind the Grid
+            buf.clear();
+            let shadow_offset = Vec2::splat(25.0);
+            let shadow_color: [f32; 4] = [0.0, 0.0, 0.0, 0.5];
+
+            let obj = Sprite2DObject {
+                spr: Sprite2D { origin_px: seth2_tex.size_vec2f()*0.5, size_px: seth2_tex.size_vec2f(), uv_tl_px: Vec2::ZERO, uv_size_px: seth2_tex.size_vec2f() },
+                transform: Transform2D::default(),
+                pipeline: TextureInfoArced(seth2_tex.clone()),
+                color: [1.0; 4],
+                layer: 0.0,
+            };
+
+            let obj = Sprite2DObject {
+                transform: obj.transform.move_by(shadow_offset),
+                color: shadow_color,
+                ..obj
+            };
+            buf.push(&obj);
+            let obj = Sprite2DObject {
+                transform: obj.transform.move_by(-shadow_offset),
+                color: [1.0; 4],
+                ..obj
+            };
+            buf.push(&obj);
+
+            let obj = Sprite2DObject {
+                spr: Sprite2D { origin_px: seth_tex.size_vec2f()*0.5, size_px: seth_tex.size_vec2f(), uv_tl_px: Vec2::ZERO, uv_size_px: seth_tex.size_vec2f() },
+                transform: Transform2D::default().with_pos(Vec2 { x: 0.0, y: -1000.0 }),
+                pipeline: TextureInfoArced(seth_tex.clone()),
+                color: [1.0; 4],
+                layer: 0.0,
+            };
+
+            let obj = Sprite2DObject {
+                transform: obj.transform.move_by(shadow_offset),
+                color: shadow_color,
+                ..obj
+            };
+            buf.push(&obj);
+            let obj = Sprite2DObject {
+                transform: obj.transform.move_by(-shadow_offset),
+                color: [1.0; 4],
+                ..obj
+            };
+            buf.push(&obj);
+
+            let obj = Sprite2DObject {
+                transform: Transform2D::default().with_pos(Vec2 { x: 0.0, y: 1000.0 }),
+                ..obj
+            };
+
+            let obj = Sprite2DObject {
+                transform: obj.transform.move_by(shadow_offset),
+                color: shadow_color,
+                ..obj
+            };
+            buf.push(&obj);
+            let obj = Sprite2DObject {
+                transform: obj.transform.move_by(-shadow_offset),
+                color: [1.0; 4],
+                ..obj
+            };
+            buf.push(&obj);
+
+            let obj = Sprite2DObject {
+                transform: Transform2D::default().with_pos(Vec2 { x: 1000.0, y: 0.0 }),
+                ..obj
+            };
+
+            let obj = Sprite2DObject {
+                transform: obj.transform.move_by(shadow_offset),
+                color: shadow_color,
+                ..obj
+            };
+            buf.push(&obj);
+            let obj = Sprite2DObject {
+                transform: obj.transform.move_by(-shadow_offset),
+                color: [1.0; 4],
+                ..obj
+            };
+            buf.push(&obj);
+
+            let obj = Sprite2DObject {
+                transform: Transform2D::default().with_pos(Vec2 { x: -1000.0, y: 0.0 }),
+                ..obj
+            };
+
+            let obj = Sprite2DObject {
+                transform: obj.transform.move_by(shadow_offset),
+                color: shadow_color,
+                ..obj
+            };
+            buf.push(&obj);
+            let obj = Sprite2DObject {
+                transform: obj.transform.move_by(-shadow_offset),
+                color: [1.0; 4],
+                ..obj
+            };
+            buf.push(&obj);
+            
+            batch.clear_batch();
+            batch.set_mvp(gfx, &vp_transposed);
+            batch.set_texture(seth2_tex.srv.clone(), seth2_tex.width, seth2_tex.height);
+            buf.for_each_sorted(batch, |batch, pp| {
+                batch.submit_and_draw(gfx).unwrap_or_else(|_| return);
+                batch.clear_batch();
+                batch.set_texture(pp.0.srv.clone(), pp.0.width, pp.0.height);
+            }, |batch, spr| {
+                batch.add(spr.transform.pos, spr.transform.scale, spr.transform.rot, &spr.spr, spr.color).unwrap_or_else(|_| return);
+            });
+            batch.submit_and_draw(gfx)?;
 
             // Grid
             let sb = &mut ctx.shape_batch;
@@ -333,12 +577,11 @@ impl App {
             sb.clear_batch();
 
             // Tiles
-            let batch = &mut ctx.batch;
             batch.clear_batch();
             batch.set_texture(
-                ctx.batch_tex_srv.srv.clone(),
-                ctx.batch_tex_srv.width,
-                ctx.batch_tex_srv.height,
+                seth_tex.srv.clone(),
+                seth_tex.width,
+                seth_tex.height,
             );
             for tile in &ctx.tiles {
                 batch
@@ -383,6 +626,44 @@ impl App {
             sb.set_mvp(gfx, &vp_transposed);
             sb.submit_and_draw(gfx).context("shape_batch submit_and_draw failed")?;
             sb.clear_batch();
+
+            // ── Text overlay (screen-space HUD) ────────────────
+            unsafe {
+                gfx.imm_context
+                    .OMSetBlendState(&gfx.states.blend_alpha, None, 0xFFFFFFFF);
+                gfx.imm_context
+                    .RSSetState(&gfx.states.rasterizer_solid_cull_none);
+                gfx.imm_context
+                    .OMSetDepthStencilState(&gfx.states.depth_none, 0);
+            }
+
+            let hud_mvp = glam::Mat4::orthographic_lh(0.0, w, h, 0.0, 0.0, 1.0);
+            let hud_vp = hud_mvp.transpose();
+
+            let text_batch = &mut ctx.text_batch;
+            text_batch.clear_batch();
+            text_batch.set_texture(
+                ctx.text_texture.srv.clone(),
+                ctx.text_texture.width,
+                ctx.text_texture.height,
+            );
+            text_batch.add(
+                Vec2::new(13.0, 13.0),
+                Vec2::new(1.0, 1.0),
+                0.0,
+                &ctx.text_sprite,
+                [0.0, 0.0, 0.0, 0.5],
+            )?;
+            text_batch.add(
+                Vec2::new(12.0, 12.0),
+                Vec2::new(1.0, 1.0),
+                0.0,
+                &ctx.text_sprite,
+                [1.0, 1.0, 1.0, 1.0],
+            )?;
+            text_batch.set_mvp(gfx, &hud_vp);
+            text_batch.submit_and_draw(gfx).context("text_batch submit_and_draw failed")?;
+            text_batch.clear_batch();
         }
 
         gfx.present().context("gfx::present failed")?;

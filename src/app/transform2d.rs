@@ -4,11 +4,17 @@ use glam::Vec2;
 ///
 /// For a child entity: `world = parent * self` means first apply self's
 /// local RST, then parent's. This is the convention used by `transform()`.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Transform2D {
     pub pos: Vec2,
     pub scale: Vec2,
     pub rot: f32,
+}
+
+impl Default for Transform2D {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
 }
 
 impl Transform2D {
@@ -17,6 +23,36 @@ impl Transform2D {
         scale: Vec2::ONE,
         rot: 0.0,
     };
+
+    pub fn with_pos(mut self, pos: Vec2) -> Self {
+        self.pos = pos;
+        self
+    }
+    
+    pub fn with_scale(mut self, scale: Vec2) -> Self {
+        self.scale = scale;
+        self
+    }
+    
+    pub fn with_rot(mut self, rot: f32) -> Self {
+        self.rot = rot;
+        self
+    }
+
+    pub fn move_by(mut self, pos: Vec2) -> Self {
+        self.pos += pos;
+        self
+    }
+
+    pub fn scale_by(mut self, scale: Vec2) -> Self {
+        self.scale *= scale;
+        self
+    }
+
+    pub fn rotate_by(mut self, rot: f32) -> Self {
+        self.rot += rot;
+        self
+    }
 
     /// Compose with a parent transform: `result = parent * self`.
     ///
