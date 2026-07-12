@@ -123,8 +123,7 @@ impl SpriteBatch2D {
         sprite: &Sprite2D,
         color: [f32; 4],
     ) -> Result<()> {
-        let (tex_srv, tex_width, tex_height) =
-            self.texture.as_ref().context("No texture set")?;
+        let (tex_srv, tex_width, tex_height) = self.texture.as_ref().context("No texture set")?;
 
         let Sprite2D {
             origin_px,

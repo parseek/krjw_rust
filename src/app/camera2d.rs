@@ -17,7 +17,6 @@ pub struct Camera2D {
     pub viewport_size: Vec2,
 }
 
-
 #[allow(unused)]
 impl Camera2D {
     /// Create a camera that covers the entire window.

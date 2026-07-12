@@ -5,9 +5,9 @@ use windows::{
     core::PCSTR,
 };
 
+use super::D3D11;
 use super::d3d11_utils::{self, write_buffer};
 use super::state_objects::StateObjects;
-use super::D3D11;
 
 #[allow(unused)]
 #[derive(Copy, Clone)]
@@ -97,12 +97,7 @@ impl ShapeBatch2D {
         self.indices.clear();
     }
 
-    pub fn set_texture(
-        &mut self,
-        srv: ID3D11ShaderResourceView,
-        width: u32,
-        height: u32,
-    ) {
+    pub fn set_texture(&mut self, srv: ID3D11ShaderResourceView, width: u32, height: u32) {
         self.texture = Some((srv, width, height));
     }
 
@@ -136,13 +131,7 @@ impl ShapeBatch2D {
         self.indices.push([base + 2, base + 1, base + 3]);
     }
 
-    pub fn add_circle_no_uv(
-        &mut self,
-        pos: Vec2,
-        radius: f32,
-        color: [f32; 4],
-        segments: u32,
-    ) {
+    pub fn add_circle_no_uv(&mut self, pos: Vec2, radius: f32, color: [f32; 4], segments: u32) {
         let segments = segments.max(3);
         let base = self.vertices.len() as u16;
 
@@ -161,18 +150,15 @@ impl ShapeBatch2D {
             });
         }
         for i in 0..segments {
-            self.indices
-                .push([base, base + 1 + i as u16, base + 1 + ((i + 1) % segments) as u16]);
+            self.indices.push([
+                base,
+                base + 1 + i as u16,
+                base + 1 + ((i + 1) % segments) as u16,
+            ]);
         }
     }
 
-    pub fn add_square_line_no_uv(
-        &mut self,
-        from: Vec2,
-        to: Vec2,
-        thickness: f32,
-        color: [f32; 4],
-    ) {
+    pub fn add_square_line_no_uv(&mut self, from: Vec2, to: Vec2, thickness: f32, color: [f32; 4]) {
         let dir = to - from;
         let len = dir.length();
         if len < 1e-6 {
@@ -285,13 +271,19 @@ impl ShapeBatch2D {
             let (s, c) = angle.sin_cos();
             self.vertices.push(ShapeVertex {
                 pos: [pos.x + c * radius, pos.y + s * radius],
-                uv: [0.5 * (u0 + u1) + 0.5 * (u1 - u0) * c, 0.5 * (v0 + v1) + 0.5 * (v1 - v0) * s],
+                uv: [
+                    0.5 * (u0 + u1) + 0.5 * (u1 - u0) * c,
+                    0.5 * (v0 + v1) + 0.5 * (v1 - v0) * s,
+                ],
                 color,
             });
         }
         for i in 0..segments {
-            self.indices
-                .push([base, base + 1 + i as u16, base + 1 + ((i + 1) % segments) as u16]);
+            self.indices.push([
+                base,
+                base + 1 + i as u16,
+                base + 1 + ((i + 1) % segments) as u16,
+            ]);
         }
     }
 

@@ -114,10 +114,11 @@ impl Transform2D {
     pub fn transform_point(&self, local_point: Vec2) -> Vec2 {
         let (sin, cos) = self.rot.sin_cos();
         let scaled = local_point * self.scale;
-        self.pos + Vec2::new(
-            scaled.x * cos - scaled.y * sin,
-            scaled.x * sin + scaled.y * cos,
-        )
+        self.pos
+            + Vec2::new(
+                scaled.x * cos - scaled.y * sin,
+                scaled.x * sin + scaled.y * cos,
+            )
     }
 
     /// Inverse: transform a point from parent space back to local space.

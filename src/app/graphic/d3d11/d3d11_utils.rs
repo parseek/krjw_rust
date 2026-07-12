@@ -277,7 +277,10 @@ pub struct TextureInfo {
 
 impl TextureInfo {
     pub fn size_vec2f(&self) -> Vec2 {
-        Vec2 { x: self.width as f32, y: self.height as f32 }
+        Vec2 {
+            x: self.width as f32,
+            y: self.height as f32,
+        }
     }
 }
 

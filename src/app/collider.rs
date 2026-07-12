@@ -99,16 +99,10 @@ impl<'a> ColliderInstance<'a> {
     /// Collision detection between two collider instances.
     pub fn overlaps(&self, other: &ColliderInstance) -> Overlap {
         match (self.shape, other.shape) {
-            (Collider::AABB { .. }, Collider::AABB { .. }) => {
-                aabb_vs_aabb(self, other)
-            }
+            (Collider::AABB { .. }, Collider::AABB { .. }) => aabb_vs_aabb(self, other),
             (Collider::AABB { .. }, Collider::Circle { .. })
-            | (Collider::Circle { .. }, Collider::AABB { .. }) => {
-                aabb_vs_circle(self, other)
-            }
-            (Collider::Circle { .. }, Collider::Circle { .. }) => {
-                circle_vs_circle(self, other)
-            }
+            | (Collider::Circle { .. }, Collider::AABB { .. }) => aabb_vs_circle(self, other),
+            (Collider::Circle { .. }, Collider::Circle { .. }) => circle_vs_circle(self, other),
             // Any combination involving at least one Rect → SAT
             _ => sat_overlap(self, other),
         }
@@ -118,8 +112,12 @@ impl<'a> ColliderInstance<'a> {
 // ─── AABB vs AABB ─────────────────────────────────────────────
 
 fn aabb_vs_aabb(a: &ColliderInstance, b: &ColliderInstance) -> Overlap {
-    let Collider::AABB { half_size: ha } = a.shape else { unreachable!() };
-    let Collider::AABB { half_size: hb } = b.shape else { unreachable!() };
+    let Collider::AABB { half_size: ha } = a.shape else {
+        unreachable!()
+    };
+    let Collider::AABB { half_size: hb } = b.shape else {
+        unreachable!()
+    };
 
     let ha = *ha * a.xform.scale;
     let hb = *hb * b.xform.scale;
@@ -147,8 +145,12 @@ fn aabb_vs_aabb(a: &ColliderInstance, b: &ColliderInstance) -> Overlap {
 // ─── Circle vs Circle ─────────────────────────────────────────
 
 fn circle_vs_circle(a: &ColliderInstance, b: &ColliderInstance) -> Overlap {
-    let Collider::Circle { radius: ra } = a.shape else { unreachable!() };
-    let Collider::Circle { radius: rb } = b.shape else { unreachable!() };
+    let Collider::Circle { radius: ra } = a.shape else {
+        unreachable!()
+    };
+    let Collider::Circle { radius: rb } = b.shape else {
+        unreachable!()
+    };
 
     let ra = ra * a.xform.scale.x.max(a.xform.scale.y);
     let rb = rb * b.xform.scale.x.max(b.xform.scale.y);
@@ -171,8 +173,12 @@ fn aabb_vs_circle(a: &ColliderInstance, b: &ColliderInstance) -> Overlap {
         Collider::AABB { .. } => (a, b),
         _ => (b, a),
     };
-    let Collider::AABB { half_size } = aabb.shape else { unreachable!() };
-    let Collider::Circle { radius } = circle.shape else { unreachable!() };
+    let Collider::AABB { half_size } = aabb.shape else {
+        unreachable!()
+    };
+    let Collider::Circle { radius } = circle.shape else {
+        unreachable!()
+    };
 
     let h = *half_size * aabb.xform.scale;
     let r = radius * circle.xform.scale.x.max(circle.xform.scale.y);
@@ -214,17 +220,11 @@ fn aabb_vs_circle(a: &ColliderInstance, b: &ColliderInstance) -> Overlap {
 fn sat_overlap(a: &ColliderInstance, b: &ColliderInstance) -> Overlap {
     // Collect axes to test (up to 4 for two OBBs, 2 for AABB × OBB)
     let axes = match (a.shape, b.shape) {
-        (Collider::Rect { .. }, Collider::Rect { .. }) => {
-            rect_axes(&a.xform, &b.xform)
-        }
+        (Collider::Rect { .. }, Collider::Rect { .. }) => rect_axes(&a.xform, &b.xform),
         (Collider::Rect { .. }, Collider::AABB { .. })
-        | (Collider::AABB { .. }, Collider::Rect { .. }) => {
-            rect_axes(&a.xform, &b.xform)
-        }
+        | (Collider::AABB { .. }, Collider::Rect { .. }) => rect_axes(&a.xform, &b.xform),
         (Collider::Rect { .. }, Collider::Circle { .. })
-        | (Collider::Circle { .. }, Collider::Rect { .. }) => {
-            rect_circle_axes(a, b)
-        }
+        | (Collider::Circle { .. }, Collider::Rect { .. }) => rect_circle_axes(a, b),
         _ => vec![], // shouldn't reach here
     };
 

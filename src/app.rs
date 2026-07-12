@@ -23,21 +23,20 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use glam::Vec2;
+use winit::dpi::LogicalSize;
+use winit::dpi::Size::Logical;
 use winit::keyboard::KeyCode;
 use winit::window::WindowAttributes;
 
-use kira::{
-    AudioManager, DefaultBackend,
-    sound::static_sound::StaticSoundData,
-};
+use kira::{AudioManager, DefaultBackend, sound::static_sound::StaticSoundData};
 
 use graphic::d3d11::D3D11;
 use graphic::d3d11::d3d11_utils::*;
 use graphic::d3d11::shape_batch_2d::ShapeBatch2D;
-use graphic::d3d11::sprite_batch_2d::{SpriteBatch2D};
+use graphic::d3d11::sprite_batch_2d::SpriteBatch2D;
 
-use windows::Win32::Graphics::{Direct3D11::*, Dxgi::Common::*};
-
+#[allow(unused)]
+mod atlas_text;
 #[allow(unused)]
 mod camera2d;
 #[allow(unused)]
@@ -49,17 +48,15 @@ mod keyboard_input;
 #[allow(unused)]
 mod mouse_input;
 #[allow(unused)]
-mod transform2d;
-#[allow(unused)]
 mod sprite2d;
+#[allow(unused)]
+mod transform2d;
 
 use camera2d::Camera2D;
 use collider::{Collider, ColliderInstance};
 use mouse_input::MouseButton;
+use sprite2d::{Sprite2D, Sprite2DBuffer, Sprite2DObject};
 use transform2d::Transform2D;
-use sprite2d::{Sprite2D, Sprite2DObject};
-use crate::app::sprite2d::Sprite2DBuffer;
-
 mod graphic;
 mod handler;
 mod timer;
@@ -111,12 +108,12 @@ pub struct AppContext {
     pub hovered_tile: Option<usize>,
     /// Grid spacing override (from const by default). / 网格间距（默认使用常量）。
     pub grid_spacing: f32,
-    /// GPU texture for the HUD text overlay. / HUD 文字覆盖的 GPU 纹理。
-    pub text_texture: TextureInfo,
-    /// Sprite batch for text rendering. / 文字渲染的精灵批处理。
-    pub text_batch: SpriteBatch2D,
-    /// Sprite descriptor for the text texture. / 文字纹理的精灵描述符。
-    pub text_sprite: Sprite2D,
+    /// Font name for HUD text, from RJW_FONTNAME env or "SimHei". / HUD 字体名称。
+    pub font_name: String,
+    /// Dynamic text atlas for HUD text rendering. / 用于 HUD 文字渲染的动态文字图集。
+    pub atlas_text: atlas_text::AtlasText,
+    /// Sprite buffer for text glyphs from the atlas. / 来自图集的文字字形精灵缓冲区。
+    pub text_buf: Sprite2DBuffer<TextureInfoArced, Transform2D>,
     /// Pipeline-sorted sprite buffer for batch rendering.
     /// 用于批渲染的流水线排序精灵缓冲区。
     pub sprite_buf: Sprite2DBuffer<TextureInfoArced, Transform2D>,
@@ -198,22 +195,29 @@ impl App {
         // Create the application window and initialise Direct3D 11.
         // 创建应用窗口并初始化 Direct3D 11。
         let window = event_loop
-            .create_window(WindowAttributes::default().with_title("KrisuRJW"))
+            .create_window(
+                WindowAttributes::default()
+                    .with_title("KrisuRJW")
+                    .with_inner_size(Logical(LogicalSize {
+                        width: 960.0,
+                        height: 600.0,
+                    })),
+            )
             .unwrap_or_else(|e| panic!("window::create: {:#}", e));
-        let gfx = D3D11::init_on_window(&window)
-            .unwrap_or_else(|e| panic!("gfx::init: {:#}", e));
+        let gfx = D3D11::init_on_window(&window).unwrap_or_else(|e| panic!("gfx::init: {:#}", e));
 
         // ── Audio ──────────────────────────────────────────────
         // Initialise Kira audio manager with the default backend.
         // 使用默认后端初始化 Kira 音频管理器。
-        let audio_mgr =
-            AudioManager::<DefaultBackend>::new(Default::default())
-                .context("AudioManager::new failed")?;
+        let audio_mgr = AudioManager::<DefaultBackend>::new(Default::default())
+            .context("AudioManager::new failed")?;
 
         macro_rules! insert_snd {
             ($name:expr, $dir:expr) => {
-                self.sounds.insert($name.to_string(),
-                    StaticSoundData::from_cursor(Cursor::new(include_bytes!($dir)))?);
+                self.sounds.insert(
+                    $name.to_string(),
+                    StaticSoundData::from_cursor(Cursor::new(include_bytes!($dir)))?,
+                );
             };
         }
         insert_snd!("snd_ominous_cancel", "../snd_ominous_cancel.wav");
@@ -246,13 +250,15 @@ impl App {
         // Create sprite and shape batches with pre-allocated vertex buffers.
         // 创建精灵批处理和形状批处理，预分配顶点缓冲区。
         let batch = SpriteBatch2D::new(
-            &gfx.device, 2048,
+            &gfx.device,
+            2048,
             &gfx.states.vs_puc_m_2d,
             &gfx.states.ps_tex_rgba_2d,
             &gfx.states.input_layout_puc,
         )?;
         let shape_batch = ShapeBatch2D::new(
-            &gfx.device, 4096,
+            &gfx.device,
+            4096,
             &gfx.states.vs_puc_m_2d,
             &gfx.states.ps_solid_2d,
             &gfx.states.input_layout_puc,
@@ -309,91 +315,13 @@ impl App {
         println!("  - 鼠标左键吸引图块");
         println!("  - X 键强力制动");
 
-        // ── Text texture (cosmic-text → D3D11 texture) ─────────
-        // Use cosmic-text to render a multi-line string into a pixel buffer,
-        // then upload as a D3D11 texture for HUD overlay.
-        // 使用 cosmic-text 将多行字符串渲染到像素缓冲区，
-        // 然后上传为 D3D11 纹理用于 HUD 叠加。
-        use cosmic_text::{Attrs, Color, FontSystem, SwashCache, Buffer, Metrics, Shaping};
-
-        let mut font_system = FontSystem::new();
-        let mut swash_cache = SwashCache::new();
-        let metrics = Metrics::new(24.0, 32.0);
-        let mut buffer = Buffer::new(&mut font_system, metrics);
-        let mut buffer = buffer.borrow_with(&mut font_system);
-        let attrs = Attrs::new();
-        buffer.set_size(Some(800.0), Some(100.0));
-        buffer.set_text(
-            "Hello, Rust! 🦀\nKrisuRJW - Render to Texture 渲染到纹理 ✓\nゆっくりしていってね！！",
-            &attrs,
-            Shaping::Advanced,
-            None,
-        );
-
-        // Compute actual pixel dimensions from layout / 从排版结果计算实际像素尺寸
-        let (mut tex_w, mut num_lines) = (0.0f32, 0u32);
-        for run in buffer.layout_runs() {
-            tex_w = tex_w.max(run.line_w);
-            num_lines += 1;
-        }
-        let line_height = 32.0;
-        let tex_w = tex_w.ceil().max(1.0) as u32;
-        let tex_h = (num_lines as f32 * line_height).ceil().max(1.0) as u32;
-        println!("Text texture: {}x{} px", tex_w, tex_h);
-
-        // Allocate pixel buffer (pre-multiplied alpha, transparent background)
-        // 分配像素缓冲区（预乘 alpha，透明背景）
-        let mut pixels = vec![0u8; (tex_w * tex_h * 4) as usize];
-
-        let text_color = Color::rgb(0xFF, 0xFF, 0xFF);
-        buffer.draw(&mut swash_cache, text_color, |x, y, w, h, color| {
-            for py in y..y + h as i32 {
-                for px in x..x + w as i32 {
-                    if px >= 0 && py >= 0 && (px as u32) < tex_w && (py as u32) < tex_h {
-                        let idx = ((py as u32 * tex_w + px as u32) * 4) as usize;
-                        pixels[idx]     = color.r();
-                        pixels[idx + 1] = color.g();
-                        pixels[idx + 2] = color.b();
-                        pixels[idx + 3] = color.a();
-                    }
-                }
-            }
-        });
-
-        // Upload to GPU / 上传到 GPU
-        let text_tex = create_texture_2d(
-            &gfx.device,
-            tex_w, tex_h,
-            DXGI_FORMAT_R8G8B8A8_UNORM,
-            D3D11_BIND_SHADER_RESOURCE.0 as u32,
-            D3D11_USAGE_DEFAULT,
-            0,
-            Some((&pixels, tex_w * 4)),
-        )?;
-        let text_srv = create_srv(&gfx.device, &text_tex, DXGI_FORMAT_R8G8B8A8_UNORM)?;
-        let text_texture = TextureInfo {
-            texture: text_tex,
-            srv: text_srv,
-            width: tex_w,
-            height: tex_h,
-            format: DXGI_FORMAT_R8G8B8A8_UNORM,
-        };
-
-        let text_sprite = Sprite2D {
-            origin_px: Vec2::ZERO,
-            size_px: Vec2::new(tex_w as f32, tex_h as f32),
-            uv_tl_px: Vec2::ZERO,
-            uv_size_px: Vec2::new(tex_w as f32, tex_h as f32),
-        };
-
-        // ── Text batch (separate small batch for HUD) ──────────
-        let text_batch = SpriteBatch2D::new(
-            &gfx.device, 64,
-            &gfx.states.vs_puc_m_2d,
-            &gfx.states.ps_tex_rgba_2d,
-            &gfx.states.input_layout_puc,
-        )?;
-
+        // ── Dynamic text atlas ─────────────────────────────────
+        // Use the atlas-based text renderer which caches glyphs and
+        // supports dynamic text changes each frame.
+        // 使用基于图集的文字渲染器，缓存字形并支持每帧动态更新文字。
+        let font_name = std::env::var("RJW_FONTNAME").unwrap_or_else(|_| "SimHei".to_string());
+        let atlas_text = atlas_text::AtlasText::new(&gfx.device, -20.0, 12000.0)?;
+        let text_buf = Sprite2DBuffer::default();
         let sprite_buf = Sprite2DBuffer::default();
 
         self.ctx = Some(AppContext {
@@ -407,10 +335,10 @@ impl App {
             camera,
             hovered_tile: None,
             grid_spacing: GRID_SPACING,
-            text_texture,
-            text_batch,
-            text_sprite,
-            sprite_buf
+            font_name,
+            atlas_text,
+            text_buf,
+            sprite_buf,
         });
         Ok(())
     }
@@ -442,8 +370,12 @@ impl App {
         let rot_speed = 2.0;
         let zoom_speed: f32 = 25.0;
 
-        if key_pressed!(self, KeyCode::KeyQ) { camera.rotation -= rot_speed * dt; }
-        if key_pressed!(self, KeyCode::KeyE) { camera.rotation += rot_speed * dt; }
+        if key_pressed!(self, KeyCode::KeyQ) {
+            camera.rotation -= rot_speed * dt;
+        }
+        if key_pressed!(self, KeyCode::KeyE) {
+            camera.rotation += rot_speed * dt;
+        }
 
         if self.mouse_input.get_mouse_wheel_delta().1 > 0.0 {
             camera.zoom *= zoom_speed.powf(dt);
@@ -454,10 +386,18 @@ impl App {
 
         let (sin_rot, cos_rot) = camera.rotation.sin_cos();
         let mut move_dir = Vec2::ZERO;
-        if key_pressed!(self, KeyCode::KeyD) { move_dir += Vec2::new(cos_rot, sin_rot); }
-        if key_pressed!(self, KeyCode::KeyA) { move_dir -= Vec2::new(cos_rot, sin_rot); }
-        if key_pressed!(self, KeyCode::KeyW) { move_dir -= Vec2::new(-sin_rot, cos_rot); }
-        if key_pressed!(self, KeyCode::KeyS) { move_dir += Vec2::new(-sin_rot, cos_rot); }
+        if key_pressed!(self, KeyCode::KeyD) {
+            move_dir += Vec2::new(cos_rot, sin_rot);
+        }
+        if key_pressed!(self, KeyCode::KeyA) {
+            move_dir -= Vec2::new(cos_rot, sin_rot);
+        }
+        if key_pressed!(self, KeyCode::KeyW) {
+            move_dir -= Vec2::new(-sin_rot, cos_rot);
+        }
+        if key_pressed!(self, KeyCode::KeyS) {
+            move_dir += Vec2::new(-sin_rot, cos_rot);
+        }
         if move_dir.length_squared() > 0.0 {
             camera.position += move_dir.normalize() * move_speed * dt;
         }
@@ -506,7 +446,11 @@ impl App {
                 tile.vel += a;
             }
 
-            let f: f32 = if key_pressed!(self, KeyCode::KeyX) { 10.0 } else { 0.1 };
+            let f: f32 = if key_pressed!(self, KeyCode::KeyX) {
+                10.0
+            } else {
+                0.1
+            };
             let len_sqr = tile.vel.length_squared();
             if len_sqr > 25.0 {
                 tile.vel += -tile.vel * f / len_sqr.sqrt();
@@ -526,7 +470,12 @@ impl App {
         }
 
         ctx.window.set_title(
-            format!("KrisuRJW - FPS: {:.2} dTime: {:.05}", self.timer.get_fps(), dt).as_str(),
+            format!(
+                "KrisuRJW - FPS: {:.2} dTime: {:.05}",
+                self.timer.get_fps(),
+                dt
+            )
+            .as_str(),
         );
 
         // ── Render ─────────────────────────────────────────────
@@ -561,7 +510,12 @@ impl App {
             let shadow_color: [f32; 4] = [0.0, 0.0, 0.0, 0.5];
 
             let obj = Sprite2DObject {
-                spr: Sprite2D { origin_px: seth2_tex.size_vec2f()*0.5, size_px: seth2_tex.size_vec2f(), uv_tl_px: Vec2::ZERO, uv_size_px: seth2_tex.size_vec2f() },
+                spr: Sprite2D {
+                    origin_px: seth2_tex.size_vec2f() * 0.5,
+                    size_px: seth2_tex.size_vec2f(),
+                    uv_tl_px: Vec2::ZERO,
+                    uv_size_px: seth2_tex.size_vec2f(),
+                },
                 transform: Transform2D::default(),
                 pipeline: TextureInfoArced(seth2_tex.clone()),
                 color: [1.0; 4],
@@ -582,7 +536,12 @@ impl App {
             buf.push(&obj);
 
             let obj = Sprite2DObject {
-                spr: Sprite2D { origin_px: seth_tex.size_vec2f()*0.5, size_px: seth_tex.size_vec2f(), uv_tl_px: Vec2::ZERO, uv_size_px: seth_tex.size_vec2f() },
+                spr: Sprite2D {
+                    origin_px: seth_tex.size_vec2f() * 0.5,
+                    size_px: seth_tex.size_vec2f(),
+                    uv_tl_px: Vec2::ZERO,
+                    uv_size_px: seth_tex.size_vec2f(),
+                },
                 transform: Transform2D::default().with_pos(Vec2 { x: 0.0, y: -1000.0 }),
                 pipeline: TextureInfoArced(seth_tex.clone()),
                 color: [1.0; 4],
@@ -655,17 +614,29 @@ impl App {
                 ..obj
             };
             buf.push(&obj);
-            
+
             batch.clear_batch();
             batch.set_mvp(gfx, &vp_transposed);
             batch.set_texture(seth2_tex.srv.clone(), seth2_tex.width, seth2_tex.height);
-            buf.for_each_sorted(batch, |batch, pp| {
-                batch.submit_and_draw(gfx).unwrap_or_else(|_| return);
-                batch.clear_batch();
-                batch.set_texture(pp.0.srv.clone(), pp.0.width, pp.0.height);
-            }, |batch, spr| {
-                batch.add(spr.transform.pos, spr.transform.scale, spr.transform.rot, &spr.spr, spr.color).unwrap_or_else(|_| return);
-            });
+            buf.for_each_sorted(
+                batch,
+                |batch, pp| {
+                    batch.submit_and_draw(gfx).unwrap_or_else(|_| return);
+                    batch.clear_batch();
+                    batch.set_texture(pp.0.srv.clone(), pp.0.width, pp.0.height);
+                },
+                |batch, spr| {
+                    batch
+                        .add(
+                            spr.transform.pos,
+                            spr.transform.scale,
+                            spr.transform.rot,
+                            &spr.spr,
+                            spr.color,
+                        )
+                        .unwrap_or_else(|_| return);
+                },
+            );
             batch.submit_and_draw(gfx)?;
 
             // Grid
@@ -673,32 +644,37 @@ impl App {
             sb.clear_batch();
             build_grid(sb, camera, ctx.grid_spacing, GRID_COLOR);
             sb.set_mvp(gfx, &vp_transposed);
-            sb.submit_and_draw(gfx).context("grid submit_and_draw failed")?;
+            sb.submit_and_draw(gfx)
+                .context("grid submit_and_draw failed")?;
             sb.clear_batch();
 
             // Tiles
             batch.clear_batch();
-            batch.set_texture(
-                seth_tex.srv.clone(),
-                seth_tex.width,
-                seth_tex.height,
-            );
+            batch.set_texture(seth_tex.srv.clone(), seth_tex.width, seth_tex.height);
             for tile in &ctx.tiles {
                 batch
                     .add(
                         tile.pos + Vec2::new(5.0, 5.0),
-                        Vec2::splat(tile.scale), tile.rot,
-                        &tile.sprite_rect, [0.0, 0.0, 0.0, 0.2],
+                        Vec2::splat(tile.scale),
+                        tile.rot,
+                        &tile.sprite_rect,
+                        [0.0, 0.0, 0.0, 0.2],
                     )
                     .unwrap_or_else(|_| ());
                 batch
-                    .add(tile.pos, Vec2::splat(tile.scale), tile.rot,
-                         &tile.sprite_rect, tile.color,
+                    .add(
+                        tile.pos,
+                        Vec2::splat(tile.scale),
+                        tile.rot,
+                        &tile.sprite_rect,
+                        tile.color,
                     )
                     .unwrap_or_else(|_| ());
             }
             batch.set_mvp(gfx, &vp_transposed);
-            batch.submit_and_draw(gfx).context("batch.submit_and_draw failed")?;
+            batch
+                .submit_and_draw(gfx)
+                .context("batch.submit_and_draw failed")?;
             batch.clear_batch();
 
             // Collider outlines + cursor circle
@@ -724,7 +700,8 @@ impl App {
                 sb.add_circle_no_uv(world_mouse, 30.0, [1.0, 1.0, 1.0, 0.3], 24);
             }
             sb.set_mvp(gfx, &vp_transposed);
-            sb.submit_and_draw(gfx).context("shape_batch submit_and_draw failed")?;
+            sb.submit_and_draw(gfx)
+                .context("shape_batch submit_and_draw failed")?;
             sb.clear_batch();
 
             // ── Text overlay (screen-space HUD) ────────────────
@@ -737,33 +714,84 @@ impl App {
                     .OMSetDepthStencilState(&gfx.states.depth_none, 0);
             }
 
+            // Build HUD text using the dynamic atlas.
+            // 使用动态图集构建 HUD 文字。
+            use cosmic_text::{Attrs, Metrics, Shaping};
+
             let hud_mvp = glam::Mat4::orthographic_lh(0.0, w, h, 0.0, 0.0, 1.0);
             let hud_vp = hud_mvp.transpose();
 
-            let text_batch = &mut ctx.text_batch;
-            text_batch.clear_batch();
-            text_batch.set_texture(
-                ctx.text_texture.srv.clone(),
-                ctx.text_texture.width,
-                ctx.text_texture.height,
+            let text_to_display = format!(
+                "FPS: {:.2} | Delta: {:.05}ms\nHello, Rust! 🦀\nKrisuRJW - Atlas Renderer　渲染文字到２Ｄ精灵✔✔✔\n　ゆっくりしていってね (❁´◡`❁)",
+                self.timer.get_fps(),
+                dt,
             );
-            text_batch.add(
-                Vec2::new(13.0, 13.0),
-                Vec2::new(1.0, 1.0),
-                0.0,
-                &ctx.text_sprite,
-                [0.0, 0.0, 0.0, 0.5],
+
+            // Clear previous text and render new glyphs into text_buf
+            ctx.text_buf.clear();
+            // Lay out text once, render twice (shadow + primary).
+            use cosmic_text::Family;
+
+            let layout = ctx.atlas_text.layout_text(
+                &text_to_display,
+                Metrics::new(24.0, 28.0),
+                Attrs::new().family(Family::Name(&ctx.font_name)),
+                Shaping::Advanced,
+                &gfx.device,
             )?;
-            text_batch.add(
-                Vec2::new(12.0, 12.0),
-                Vec2::new(1.0, 1.0),
+
+            // Shadow
+            ctx.atlas_text.render_layout_simple(
+                &layout,
+                Vec2::new(10.0, 6.0),
+                [0.0, 0.0, 0.0, 0.75],
                 0.0,
-                &ctx.text_sprite,
+                &mut ctx.text_buf,
+            );
+
+            // Primary text
+            ctx.atlas_text.render_layout_simple(
+                &layout,
+                Vec2::new(8.0, 4.0),
                 [1.0, 1.0, 1.0, 1.0],
-            )?;
-            text_batch.set_mvp(gfx, &hud_vp);
-            text_batch.submit_and_draw(gfx).context("text_batch submit_and_draw failed")?;
-            text_batch.clear_batch();
+                0.0,
+                &mut ctx.text_buf,
+            );
+
+            // Upload atlas dirty pages to GPU before rendering
+            ctx.atlas_text.upload(gfx)?;
+
+            // Render the text sprites in sorted order
+            batch.clear_batch();
+            batch.set_mvp(gfx, &hud_vp);
+            // Use the first atlas page texture as initial texture
+            if ctx.atlas_text.page_count() > 0 {
+                let ti = ctx.atlas_text.texture_info(0);
+                batch.set_texture(ti.srv.clone(), ti.width, ti.height);
+            }
+            ctx.text_buf.for_each_sorted(
+                batch,
+                |batch, pp| {
+                    batch.submit_and_draw(gfx).unwrap_or_else(|_| {});
+                    batch.clear_batch();
+                    batch.set_texture(pp.0.srv.clone(), pp.0.width, pp.0.height);
+                },
+                |batch, spr| {
+                    batch
+                        .add(
+                            spr.transform.pos,
+                            spr.transform.scale,
+                            spr.transform.rot,
+                            &spr.spr,
+                            spr.color,
+                        )
+                        .unwrap_or_else(|_| {});
+                },
+            );
+            batch
+                .submit_and_draw(gfx)
+                .context("text_buf submit_and_draw failed")?;
+            batch.clear_batch();
         }
 
         gfx.present().context("gfx::present failed")?;
@@ -771,7 +799,6 @@ impl App {
         Ok(())
     }
 }
-
 
 /// Build a perspective grid of lines visible within the camera frustum.
 /// 构建相机视锥内可见的透视线网格。
@@ -805,7 +832,8 @@ fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, spacing: f32, color: [f3
             sb.add_square_line_no_uv(
                 Vec2::new(x, min_y) + *off,
                 Vec2::new(x, max_y) + *off,
-                10.0, col,
+                10.0,
+                col,
             );
         }
         x += spacing;
@@ -817,7 +845,8 @@ fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, spacing: f32, color: [f3
             sb.add_square_line_no_uv(
                 Vec2::new(min_x, y) + *off,
                 Vec2::new(max_x, y) + *off,
-                10.0, col,
+                10.0,
+                col,
             );
         }
         y += spacing;

@@ -107,7 +107,11 @@ impl MouseInput {
                 self.in_window = false;
             }
             #[allow(unused)]
-            WindowEvent::MouseInput { device_id, state, button } => {
+            WindowEvent::MouseInput {
+                device_id,
+                state,
+                button,
+            } => {
                 let button_index = match *button {
                     winit::event::MouseButton::Left => 0,
                     winit::event::MouseButton::Right => 1,
@@ -145,7 +149,7 @@ impl MouseInput {
                 self.mouse_delta.0 += delta.0;
                 self.mouse_delta.1 += delta.1;
             }
-            // winit::event::DeviceEvent::Button { button, state } => 
+            // winit::event::DeviceEvent::Button { button, state } =>
             // winit::event::DeviceEvent::MouseWheel { delta } => {
             //     match delta {
             //         winit::event::MouseScrollDelta::LineDelta(x, y) => {

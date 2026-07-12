@@ -291,10 +291,14 @@ impl StateObjects {
             )
             .context("compile vs_puc_m_2d failed")?;
 
-            let vs_puc_m_2d = d3d11_utils::create_vs(device, include_bytes!("shaders/vs_puc_m_2d.hlsl"))?;
-            let ps_solid_2d = d3d11_utils::create_ps(device, include_bytes!("shaders/ps_solid_2d.hlsl"))?;
-            let ps_tex_rgba_2d = d3d11_utils::create_ps(device, include_bytes!("shaders/ps_tex_rgba_2d.hlsl"))?;
-            let ps_tex_r8_2d = d3d11_utils::create_ps(device, include_bytes!("shaders/ps_tex_r8_2d.hlsl"))?;
+            let vs_puc_m_2d =
+                d3d11_utils::create_vs(device, include_bytes!("shaders/vs_puc_m_2d.hlsl"))?;
+            let ps_solid_2d =
+                d3d11_utils::create_ps(device, include_bytes!("shaders/ps_solid_2d.hlsl"))?;
+            let ps_tex_rgba_2d =
+                d3d11_utils::create_ps(device, include_bytes!("shaders/ps_tex_rgba_2d.hlsl"))?;
+            let ps_tex_r8_2d =
+                d3d11_utils::create_ps(device, include_bytes!("shaders/ps_tex_r8_2d.hlsl"))?;
 
             const INPUT_LAYOUT_PUC: [D3D11_INPUT_ELEMENT_DESC; 3] = [
                 D3D11_INPUT_ELEMENT_DESC {
@@ -326,12 +330,9 @@ impl StateObjects {
                 },
             ];
 
-            let input_layout_puc = d3d11_utils::create_input_layout(
-                device,
-                &INPUT_LAYOUT_PUC,
-                &vs_blob,
-            )
-            .context("create_input_layout_puc failed")?;
+            let input_layout_puc =
+                d3d11_utils::create_input_layout(device, &INPUT_LAYOUT_PUC, &vs_blob)
+                    .context("create_input_layout_puc failed")?;
 
             Ok(Self {
                 blend_opaque,

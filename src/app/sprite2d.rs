@@ -52,7 +52,10 @@ pub struct Sprite2D {
 /// * `U` — transform type (any `Clone`) / 变换类型
 #[derive(Clone, Debug)]
 pub struct Sprite2DObject<T, U>
-where T: HaveID + Clone, U: Clone {
+where
+    T: HaveID + Clone,
+    U: Clone,
+{
     /// Sprite geometry descriptor (UV rect, origin). / 精灵几何描述符（UV 矩形、原点）
     pub spr: Sprite2D,
     /// RGBA colour (pre-multiplied alpha). / RGBA 颜色（预乘 alpha）
@@ -66,7 +69,10 @@ where T: HaveID + Clone, U: Clone {
 }
 
 impl<T, U> Sprite2DObject<T, U>
-where T: HaveID + Clone, U: Clone {
+where
+    T: HaveID + Clone,
+    U: Clone,
+{
     /// Compare two objects for sorting: first by `layer`, then by `pipeline.get_id()`.
     /// 比较两个对象的排序顺序：先比 `layer`，再比 `pipeline.get_id()`。
     fn cmp_key(&self, other: &Self) -> Ordering {
@@ -83,7 +89,10 @@ where T: HaveID + Clone, U: Clone {
 /// `push()` 以 O(1) 插入，排序推迟到迭代时进行。
 #[derive(Debug)]
 pub struct Sprite2DBuffer<T, U>
-where T: HaveID + Clone, U: Clone {
+where
+    T: HaveID + Clone,
+    U: Clone,
+{
     /// Primary storage — all sprite objects. / 主存储——所有精灵对象
     buf: Vec<Sprite2DObject<T, U>>,
     /// Indices into `buf`, kept in sorted order after `sort()`.
@@ -98,7 +107,10 @@ where T: HaveID + Clone, U: Clone {
 }
 
 impl<T, U> Default for Sprite2DBuffer<T, U>
-where T: HaveID + Clone, U: Clone {
+where
+    T: HaveID + Clone,
+    U: Clone,
+{
     fn default() -> Self {
         Self {
             buf: Vec::new(),
@@ -110,7 +122,10 @@ where T: HaveID + Clone, U: Clone {
 }
 
 impl<T, U> Sprite2DBuffer<T, U>
-where T: HaveID + Clone, U: Clone {
+where
+    T: HaveID + Clone,
+    U: Clone,
+{
     /// Reserve capacity for `additional` sprites to avoid re-allocation.
     /// 预分配 `additional` 个精灵的容量，避免重复分配。
     pub fn reserve(&mut self, additional: usize) {
@@ -174,8 +189,12 @@ where T: HaveID + Clone, U: Clone {
     ///     },
     /// );
     /// ```
-    pub fn for_each_sorted<B, F, G>(&mut self, ex: &mut B, mut on_pipeline_change: F, mut on_item: G)
-    where
+    pub fn for_each_sorted<B, F, G>(
+        &mut self,
+        ex: &mut B,
+        mut on_pipeline_change: F,
+        mut on_item: G,
+    ) where
         F: FnMut(&mut B, &T),
         G: FnMut(&mut B, &Sprite2DObject<T, U>),
     {

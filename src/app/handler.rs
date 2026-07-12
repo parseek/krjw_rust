@@ -38,7 +38,8 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 self.window_size = (size.width, size.height);
                 if let Some(ctx) = self.ctx.as_mut() {
-                    ctx.gfx.on_resize(size.width, size.height)
+                    ctx.gfx
+                        .on_resize(size.width, size.height)
                         .unwrap_or_else(|e| panic!("gfx::resize: {:#}", e));
                 }
             }
