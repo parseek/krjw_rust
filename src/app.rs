@@ -1,12 +1,12 @@
 //! # Application layer — `App` & `AppContext`
 //!
-//! Ties together windowing, GPU, audio, input, physics, and rendering.
-//! 整合窗口管理、GPU、音频、输入、物理和渲染。
+//! Ties together windowing, GPU, audio, physics, and rendering.
+//! 整合窗口管理、GPU、音频、物理和渲染。
 //!
 //! ## Lifecycle / 生命周期
 //!
 //! 1. `App::default()` — create with default state / 创建默认状态
-//! 2. `App::run(window, rx)` — init GPU + audio + textures, enter main loop / 初始化 GPU + 音频 + 纹理，进入主循环
+//! 2. `App::run(window, hwnd, rx)` — init GPU + audio + textures, enter main loop / 初始化 GPU + 音频 + 纹理，进入主循环
 //! 3. main loop — input → physics → render → present / 输入 → 物理 → 渲染 → 提交
 //!
 //! ## Key types / 关键类型
@@ -14,6 +14,7 @@
 //! - [`TextureInfoArced`] — thread-safe texture reference implementing `HaveID` / 实现 `HaveID` 的线程安全纹理引用
 //! - [`Tile`] — a bouncing sprite tile with physics / 带物理的弹跳精灵图块
 //! - [`AppContext`] — all non-default-constructible resources / 所有不可默认构造的资源
+//! - [`EventDriver`](event_driver::EventDriver) — receives and processes winit events / 接收并处理 winit 事件
 
 use std::collections::HashMap;
 #[allow(unused_imports)]
@@ -48,6 +49,8 @@ pub mod keyboard_input;
 #[allow(unused)]
 pub mod mouse_input;
 #[allow(unused)]
+pub mod event_driver;
+#[allow(unused)]
 pub mod msg;
 #[allow(unused)]
 pub mod sprite2d;
@@ -56,6 +59,7 @@ pub mod transform2d;
 
 use camera2d::Camera2D;
 use collider::{Collider, ColliderInstance};
+use event_driver::EventDriver;
 use mouse_input::MouseButton;
 use graphic::d3d11::sprite_batch_2d::Pipeline;
 use sprite2d::{Sprite2D, Sprite2DBuffer, Sprite2DObject};
@@ -157,19 +161,10 @@ pub struct Tile {
 /// Top-level application state.
 /// 顶层应用状态。
 ///
-/// Fields are public for macro access (`key_pressed!`, `key_state!`).
-/// 字段为 pub 以便宏访问（`key_pressed!`、`key_state!`）。
+/// Event handling and input state are managed by `EventDriver`.
+/// 事件处理和输入状态由 `EventDriver` 管理。
 #[derive(Default)]
 pub struct App {
-    /// Window position in screen coordinates. / 窗口在屏幕坐标中的位置。
-    pub window_pos: (i32, i32),
-    /// Window size in physical pixels. / 窗口大小（物理像素）。
-    pub window_size: (u32, u32),
-    pub window_size_dirty: bool,
-    /// Keyboard input state. / 键盘输入状态。
-    pub keyboard_input: keyboard_input::KeyboardInput,
-    /// Mouse input state. / 鼠标输入状态。
-    pub mouse_input: mouse_input::MouseInput,
     /// Loaded sound data keyed by name. / 按名称索引的已加载音效数据。
     pub sounds: HashMap<String, StaticSoundData>,
     /// Frame timer (FPS, delta time). / 帧计时器（FPS、帧间隔）。
@@ -181,16 +176,16 @@ pub struct App {
 /// Check if a key is currently pressed. / 检查按键是否处于按下状态。
 #[allow(unused)]
 macro_rules! key_pressed {
-    ($self:expr, $key:expr) => {
-        $self.keyboard_input.get_key_state($key).is_pressed()
+    ($driver:expr, $key:expr) => {
+        $driver.keyboard().get_key_state($key).is_pressed()
     };
 }
 
 /// Get the full key state. / 获取完整按键状态。
 #[allow(unused)]
 macro_rules! key_state {
-    ($self:expr, $key:expr) => {
-        $self.keyboard_input.get_key_state($key)
+    ($driver:expr, $key:expr) => {
+        $driver.keyboard().get_key_state($key)
     };
 }
 
@@ -219,7 +214,10 @@ impl App {
 
         // Get initial window size
         let size = window.inner_size();
-        self.window_size = (size.width, size.height);
+
+        // ── Event driver ───────────────────────────────────────
+        let mut driver = EventDriver::new(rx);
+        driver.set_initial_window_size(size.width, size.height);
 
         // ── Audio ──────────────────────────────────────────────
         let audio_mgr = self.init_audio()?;
@@ -234,7 +232,7 @@ impl App {
         let tiles = Self::init_tiles(&textures);
 
         // ── Camera ─────────────────────────────────────────────
-        let camera = self.init_camera();
+        let camera = self.init_camera(driver.window_size());
 
         self.startup_info();
 
@@ -264,108 +262,53 @@ impl App {
 
         // ── Main loop ──────────────────────────────────────────
         println!("[AppThread] entering main loop");
-        self.main_loop(rx)?;
+        self.main_loop(&mut driver)?;
         println!("[AppThread] main loop ended");
 
         Ok(())
     }
 
-    /// Main loop — processes messages and runs frames.
-    /// 主循环——处理消息并运行帧。
+    /// Main loop — uses `EventDriver` for message processing and input state.
+    /// 主循环——使用 `EventDriver` 处理消息和输入状态。
     fn main_loop(
         &mut self,
-        rx: Receiver<crate::app::msg::AppMsg>,
+        driver: &mut EventDriver,
     ) -> Result<()> {
-        // let frame_dur = std::time::Duration::from_secs_f64(1.0 / 60.0);
-        let mut running = true;
-
-        while running {
-            // let frame_start = std::time::Instant::now();
-
-            self.window_size_dirty = false;
-
-            // Drain all pending messages from the channel (non-blocking)
-            loop {
-                match rx.try_recv() {
-                    Ok(msg) => {
-                        if !self.handle_msg(msg) {
-                            // CloseRequested
-                            running = false;
-                            break;
-                        }
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        println!("[AppThread] channel disconnected, exiting");
-                        running = false;
-                        break;
-                    }
-                }
-            }
-
-            if !running {
+        loop {
+            // Poll all pending events from the channel
+            let events = driver.poll_frame();
+            if events.close_requested || events.disconnected {
                 break;
             }
 
-            if self.window_size_dirty {
+            // Handle window resize if dirty
+            if driver.window_size_dirty() {
                 if let Some(ctx) = self.ctx.as_mut() {
+                    let (w, h) = driver.window_size();
                     ctx.gfx
-                        .on_resize(self.window_size.0, self.window_size.1)
+                        .on_resize(w, h)
                         .unwrap_or_else(|e| panic!("gfx::resize: {:#}", e));
                 }
+                driver.clear_window_size_dirty();
             }
 
             // Run one frame
             let dt = self.delta_time();
-            self.handle_camera_input(dt);
-            self.handle_sound_effects();
-            self.update_tiles(dt);
+            self.handle_camera_input(dt, driver);
+            self.handle_sound_effects(driver);
+            self.update_tiles(dt, driver);
             self.update_window_title(dt);
-            self.render_frame(dt)?;
+            self.render_frame(dt, driver)?;
 
             let ctx = self.ctx.as_mut().unwrap();
             ctx.gfx.present().context("gfx::present failed")?;
             self.timer.post_frame_fpsc(dt as f64);
 
             // End frame — advance edge states
-            self.keyboard_input.end_frame();
-            self.mouse_input.end_frame();
-
-            // Sleep to maintain roughly 60 FPS
-            // let elapsed = frame_start.elapsed();
-            // if elapsed < frame_dur {
-            //     std::thread::sleep(frame_dur - elapsed);
-            // }
+            driver.end_frame();
         }
 
         Ok(())
-    }
-
-    /// Handle a single message from the main thread.
-    /// 处理来自主线程的单个消息。
-    ///
-    /// Returns `true` to continue running, `false` to exit.
-    /// 返回 `true` 表示继续运行，`false` 表示退出。
-    fn handle_msg(&mut self, msg: crate::app::msg::AppMsg) -> bool {
-        use crate::app::msg::AppMsg;
-        match msg {
-            AppMsg::CloseRequested => {
-                println!("[AppThread] received CloseRequested");
-                return false;
-            }
-            AppMsg::Resized(w, h) => {
-                self.window_size = (w, h);
-                self.window_size_dirty = true;
-            }
-            AppMsg::Moved(x, y) => {
-                self.window_pos = (x, y);
-            }
-            ref other => {
-                self.keyboard_input.handle_msg(other);
-                self.mouse_input.handle_msg(other);
-            }
-        }
-        true
     }
 
     pub fn startup_info(&self) {
@@ -479,8 +422,8 @@ impl App {
         tiles
     }
 
-    fn init_camera(&self) -> Camera2D {
-        let ws = Vec2::new(self.window_size.0 as f32, self.window_size.1 as f32);
+    fn init_camera(&self, window_size: (u32, u32)) -> Camera2D {
+        let ws = Vec2::new(window_size.0 as f32, window_size.1 as f32);
         Camera2D::new(ws)
     }
 
@@ -541,7 +484,7 @@ impl App {
 
     /// Handle camera movement (Q/E rotation, W/A/S/D translation, scroll zoom).
     /// 处理相机移动（Q/E 旋转、W/A/S/D 平移、滚轮缩放）。
-    fn handle_camera_input(&mut self, dt: f64) {
+    fn handle_camera_input(&mut self, dt: f64, driver: &EventDriver) {
         let ctx = self.ctx.as_mut().unwrap();
         let camera = &mut ctx.camera;
 
@@ -549,15 +492,15 @@ impl App {
         let rot_speed = 2.0;
         let zoom_speed: f32 = 25.0;
 
-        if key_pressed!(self, KeyCode::KeyQ) {
+        if key_pressed!(driver, KeyCode::KeyQ) {
             camera.rotation -= rot_speed * dt as f32;
         }
-        if key_pressed!(self, KeyCode::KeyE) {
+        if key_pressed!(driver, KeyCode::KeyE) {
             camera.rotation += rot_speed * dt as f32;
         }
 
         // Zoom: prefer pixel wheel (touchpad), fall back to line wheel (mouse)
-        if let Some(pixel) = self.mouse_input.get_pixel_wheel() {
+        if let Some(pixel) = driver.mouse().get_pixel_wheel() {
             // PixelDelta values are large, scale down significantly
             if pixel.1 > 0.0 {
                 camera.zoom *= (zoom_speed * 0.02).powf(dt as f32 * pixel.1 as f32);
@@ -566,26 +509,26 @@ impl App {
                 camera.zoom /= (zoom_speed * 0.02).powf(dt as f32 * (-pixel.1) as f32);
             }
         } else {
-            if self.mouse_input.get_mouse_wheel_delta().1 > 0.0 {
+            if driver.mouse().get_mouse_wheel_delta().1 > 0.0 {
                 camera.zoom *= zoom_speed.powf(dt as f32);
             }
-            if self.mouse_input.get_mouse_wheel_delta().1 < 0.0 {
+            if driver.mouse().get_mouse_wheel_delta().1 < 0.0 {
                 camera.zoom /= zoom_speed.powf(dt as f32);
             }
         }
 
         let (sin_rot, cos_rot) = camera.rotation.sin_cos();
         let mut move_dir = Vec2::ZERO;
-        if key_pressed!(self, KeyCode::KeyD) {
+        if key_pressed!(driver, KeyCode::KeyD) {
             move_dir += Vec2::new(cos_rot, sin_rot);
         }
-        if key_pressed!(self, KeyCode::KeyA) {
+        if key_pressed!(driver, KeyCode::KeyA) {
             move_dir -= Vec2::new(cos_rot, sin_rot);
         }
-        if key_pressed!(self, KeyCode::KeyW) {
+        if key_pressed!(driver, KeyCode::KeyW) {
             move_dir -= Vec2::new(-sin_rot, cos_rot);
         }
-        if key_pressed!(self, KeyCode::KeyS) {
+        if key_pressed!(driver, KeyCode::KeyS) {
             move_dir += Vec2::new(-sin_rot, cos_rot);
         }
         if move_dir.length_squared() > 0.0 {
@@ -594,26 +537,25 @@ impl App {
 
         // Viewport always matches window
         camera.viewport_pos = Vec2::splat(0.0f32);
-        let w = self.window_size.0 as f32;
-        let h = self.window_size.1 as f32;
-        camera.viewport_size = Vec2::new(w, h);
+        let (w, h) = driver.window_size();
+        camera.viewport_size = Vec2::new(w as f32, h as f32);
 
         camera.apply_viewport(&ctx.gfx);
     }
 
     /// Play sound effects based on input events.
     /// 根据输入事件播放音效。
-    fn handle_sound_effects(&mut self) {
+    fn handle_sound_effects(&mut self, driver: &EventDriver) {
         let ctx = self.ctx.as_mut().unwrap();
         let audio_mgr = &mut ctx.audio_mgr;
 
-        if key_state!(self, KeyCode::KeyX).is_down_true_edge() {
+        if key_state!(driver, KeyCode::KeyX).is_down_true_edge() {
             if let Some(snd) = self.sounds.get("snd_ominous_cancel") {
                 audio_mgr.play(snd.clone().volume(0.0)).unwrap();
             }
         }
-        if self
-            .mouse_input
+        if driver
+            .mouse()
             .get_mouse_button_state(MouseButton::Left)
             .is_down_edge()
         {
@@ -627,14 +569,14 @@ impl App {
     /// Also detects which tile is under the cursor (hover).
     /// 更新图块物理（位置、速度、旋转、鼠标吸引力、空气阻力）。
     /// 同时检测光标下方的图块（悬停）。
-    fn update_tiles(&mut self, dt: f64) {
+    fn update_tiles(&mut self, dt: f64, driver: &EventDriver) {
         let ctx = self.ctx.as_mut().unwrap();
         let camera = &mut ctx.camera;
 
-        let mouse_screen = self.mouse_input.get_mouse_pos_vec2();
+        let mouse_screen = driver.mouse().get_mouse_pos_vec2();
         let world_mouse = camera.screen_to_world(mouse_screen);
-        let lmb_pressed = self
-            .mouse_input
+        let lmb_pressed = driver
+            .mouse()
             .get_mouse_button_state(MouseButton::Left)
             .is_pressed();
 
@@ -651,7 +593,7 @@ impl App {
                 tile.vel += a;
             }
 
-            let f: f32 = if key_pressed!(self, KeyCode::KeyX) {
+            let f: f32 = if key_pressed!(driver, KeyCode::KeyX) {
                 10.0
             } else {
                 0.1
@@ -826,7 +768,7 @@ impl App {
 
     /// Render collider outlines and the mouse cursor circle.
     /// 渲染碰撞体轮廓和鼠标光标圆圈。
-    fn render_colliders(&mut self) -> Result<()> {
+    fn render_colliders(&mut self, driver: &EventDriver) -> Result<()> {
         let ctx = self.ctx.as_mut().unwrap();
         let gfx = &ctx.gfx;
         let camera = &ctx.camera;
@@ -850,12 +792,12 @@ impl App {
             };
             draw_collider_outline(sb, &inst, color);
         }
-        if self
-            .mouse_input
+        if driver
+            .mouse()
             .get_mouse_button_state(MouseButton::Left)
             .is_pressed()
         {
-            let mouse_screen = self.mouse_input.get_mouse_pos_vec2();
+            let mouse_screen = driver.mouse().get_mouse_pos_vec2();
             let world_mouse = camera.screen_to_world(mouse_screen);
             sb.add_circle_no_uv(world_mouse, 30.0, [1.0, 1.0, 1.0, 0.3], 24);
         }
@@ -868,7 +810,7 @@ impl App {
 
     /// Render the HUD text overlay (screen-space) using push_buffered.
     /// 渲染 HUD 文字覆盖层（屏幕空间）。
-    fn render_hud(&mut self, dt: f64) -> Result<()> {
+    fn render_hud(&mut self, dt: f64, driver: &EventDriver) -> Result<()> {
         let ctx = self.ctx.as_mut().unwrap();
         let gfx = &ctx.gfx;
 
@@ -883,8 +825,9 @@ impl App {
 
         use cosmic_text::{Attrs, Family, Metrics, Shaping};
 
-        let w = self.window_size.0 as f32;
-        let h = self.window_size.1 as f32;
+        let (w, h) = driver.window_size();
+        let w = w as f32;
+        let h = h as f32;
 
         let hud_mvp = glam::Mat4::orthographic_lh(0.0, w, h, 0.0, 0.0, 1.0);
         let hud_vp = hud_mvp.transpose();
@@ -934,8 +877,9 @@ impl App {
 
     /// Render a full frame: background, demo sprites, grid, tiles, colliders, HUD text.
     /// 渲染完整帧：背景、演示精灵、网格、图块、碰撞体、HUD 文字。
-    fn render_frame(&mut self, dt: f64) -> Result<()> {
-        if self.window_size.0 == 0 || self.window_size.1 == 0 {
+    fn render_frame(&mut self, dt: f64, driver: &EventDriver) -> Result<()> {
+        let (w, h) = driver.window_size();
+        if w == 0 || h == 0 {
             return Ok(());
         }
 
@@ -959,8 +903,8 @@ impl App {
         self.render_demo_sprites()?;
         self.render_grid()?;
         self.render_tiles()?;
-        self.render_colliders()?;
-        self.render_hud(dt)?;
+        self.render_colliders(driver)?;
+        self.render_hud(dt, driver)?;
 
         Ok(())
     }
