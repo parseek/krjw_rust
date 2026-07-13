@@ -7,7 +7,7 @@ use windows::{
 
 use super::D3D11;
 use super::d3d11_utils::{self, write_buffer};
-use crate::app::sprite2d::{Sprite2D, HaveID, Sprite2DBuffer, Sprite2DObject};
+use crate::sprite2d::{Sprite2D, HaveID, Sprite2DBuffer, Sprite2DObject};
 
 /// Trait for types that can bind themselves to a batch as a rendering pipeline.
 /// 可以绑定到批处理作为渲染流水线的类型 trait。

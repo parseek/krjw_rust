@@ -58,7 +58,7 @@ impl Camera2D {
     /// --- Viewport state application ---
 
     /// Set the GPU viewport to match this camera's viewport rect.
-    pub fn apply_viewport(&self, gfx: &super::graphic::d3d11::D3D11) {
+    pub fn apply_viewport(&self, gfx: &crate::graphic::d3d11::D3D11) {
         gfx.set_viewport(
             self.viewport_pos.x,
             self.viewport_pos.y,

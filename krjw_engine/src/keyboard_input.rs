@@ -26,8 +26,8 @@ impl KeyboardInput {
     }
     /// Handle an AppMsg directly, bypassing winit event synthesis.
     /// 直接处理 AppMsg，绕过 winit 事件合成。
-    pub fn handle_msg(&mut self, msg: &crate::app::msg::AppMsg) {
-        use crate::app::msg::AppMsg;
+    pub fn handle_msg(&mut self, msg: &crate::msg::AppMsg) {
+        use crate::msg::AppMsg;
         if let AppMsg::KeyboardInput { key_code, state } = msg {
             let key_state = self.key_map.entry(*key_code).or_insert(KEY_STATE_RELEASED);
             let new_key_state = match state {

@@ -62,8 +62,8 @@ impl MouseInput {
 
     /// Handle an AppMsg directly, bypassing winit event synthesis.
     /// 直接处理 AppMsg，绕过 winit 事件合成。
-    pub fn handle_msg(&mut self, msg: &crate::app::msg::AppMsg) {
-        use crate::app::msg::AppMsg;
+    pub fn handle_msg(&mut self, msg: &crate::msg::AppMsg) {
+        use crate::msg::AppMsg;
         match msg {
             AppMsg::CursorMoved(x, y) => {
                 self.mouse_position = (*x, *y);

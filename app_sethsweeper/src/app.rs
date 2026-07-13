@@ -1,246 +1,156 @@
-//! # Application layer — `App` & `AppContext`
+//! # Application layer — `App`
 //!
-//! Ties together windowing, GPU, audio, physics, and rendering.
-//! 整合窗口管理、GPU、音频、物理和渲染。
-//!
-//! ## Lifecycle / 生命周期
-//!
-//! 1. `App::default()` — create with default state / 创建默认状态
-//! 2. `App::run(window, hwnd, rx)` — init GPU + audio + textures, enter main loop / 初始化 GPU + 音频 + 纹理，进入主循环
-//! 3. main loop — input → physics → render → present / 输入 → 物理 → 渲染 → 提交
-//!
-//! ## Key types / 关键类型
-//!
-//! - [`TextureInfoArced`] — thread-safe texture reference implementing `HaveID` / 实现 `HaveID` 的线程安全纹理引用
-//! - [`Tile`] — a bouncing sprite tile with physics / 带物理的弹跳精灵图块
-//! - [`AppContext`] — all non-default-constructible resources / 所有不可默认构造的资源
-//! - [`EventDriver`](event_driver::EventDriver) — receives and processes winit events / 接收并处理 winit 事件
+//! Ties together engine, game state, physics, and rendering.
+//! 整合引擎、游戏状态、物理和渲染。
 
 use std::collections::HashMap;
-#[allow(unused_imports)]
-use std::f64::consts::*;
 use std::io::Cursor;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use anyhow::{Context, Result};
 use glam::Vec2;
-use winit::dpi::LogicalSize;
 use winit::keyboard::KeyCode;
-use winit::window::Window;
 
 use kira::{AudioManager, DefaultBackend, sound::static_sound::StaticSoundData};
 
-use graphic::d3d11::D3D11;
-use graphic::d3d11::d3d11_utils::*;
-use graphic::d3d11::shape_batch_2d::ShapeBatch2D;
-use graphic::d3d11::sprite_batch_2d::SpriteBatch2D;
+use krjw_engine::{
+    self,
+    atlas_text::AtlasText,
+    camera2d::Camera2D,
+    collider::{Collider, ColliderInstance},
+    event_driver::EventDriver,
+    mouse_input::MouseButton,
+    sprite2d::{Sprite2D, Sprite2DBuffer, Sprite2DObject},
+    transform2d::Transform2D,
+    graphic::d3d11::D3D11,
+    graphic::d3d11::d3d11_utils::*,
+    graphic::d3d11::shape_batch_2d::ShapeBatch2D,
+    graphic::d3d11::sprite_batch_2d::{SpriteBatch2D},
+    TextureInfoArced, Timer, AppMsg,
+};
 
-#[allow(unused)]
-pub mod atlas_text;
-#[allow(unused)]
-pub mod camera2d;
-#[allow(unused)]
-pub mod collider;
-#[allow(unused)]
-pub mod key_state;
-#[allow(unused)]
-pub mod keyboard_input;
-#[allow(unused)]
-pub mod mouse_input;
-#[allow(unused)]
-pub mod event_driver;
-#[allow(unused)]
-pub mod msg;
-#[allow(unused)]
-pub mod sprite2d;
-#[allow(unused)]
-pub mod transform2d;
-
-use camera2d::Camera2D;
-use collider::{Collider, ColliderInstance};
-use event_driver::EventDriver;
-use mouse_input::MouseButton;
-use graphic::d3d11::sprite_batch_2d::Pipeline;
-use sprite2d::{Sprite2D, Sprite2DBuffer, Sprite2DObject};
-use transform2d::Transform2D;
-mod graphic;
-mod timer;
-
-/// Spacing between grid lines in world units. / 网格线间距（世界单位）。
-const GRID_SPACING: f32 = 100.0;
-/// Grid line colour (RGBA). / 网格线颜色（RGBA）。
-const GRID_COLOR: [f32; 4] = [0.15, 0.15, 0.15, 1.0];
-
-/// An `Arc<TextureInfo>` wrapper that implements `HaveID` using the pointer address.
-/// `Arc<TextureInfo>` 的包装器，用指针地址实现 `HaveID`。
-///
-/// This allows `Sprite2DBuffer` to detect when the active texture changes.
-/// 这使得 `Sprite2DBuffer` 能够检测当前纹理的切换。
-#[derive(Debug, Clone)]
-pub struct TextureInfoArced(pub Arc<TextureInfo>);
-
-impl sprite2d::HaveID for TextureInfoArced {
-    /// Returns the memory address of the inner `TextureInfo` as a unique ID.
-    /// 用内部 `TextureInfo` 的内存地址作为唯一 ID。
-    fn get_id(&self) -> u64 {
-        self.0.as_ref() as *const _ as u64
-    }
-}
-
-impl Pipeline for TextureInfoArced {
-    fn apply_to_batch(&self, batch: &mut SpriteBatch2D) {
-        batch.set_texture(self.0.srv.clone(), self.0.width, self.0.height);
-    }
-}
-
-/// Runtime application context — created after window initialisation.
-/// 运行时应用上下文——窗口初始化后创建。
-///
-/// Contains all GPU/audio/texture resources and game state.
-/// 包含所有 GPU/音频/纹理资源和游戏状态。
-pub struct AppContext {
-    /// The winit window. / winit 窗口。
-    pub window: winit::window::Window,
-    /// Direct3D 11 device & context wrapper. / Direct3D 11 设备和上下文封装。
-    pub gfx: D3D11,
-    /// Kira audio manager. / Kira 音频管理器。
-    pub audio_mgr: AudioManager,
-    /// Primary sprite batch for rendering. / 主精灵渲染批处理。
-    pub batch: SpriteBatch2D,
-    /// Loaded textures keyed by name. / 按名称索引的已加载纹理。
-    pub textures: HashMap<String, Arc<TextureInfo>>,
-    /// 2D shape batch for lines and circles. / 2D 形状批处理（线条和圆形）。
-    pub shape_batch: ShapeBatch2D,
-    /// Bouncing tiles with physics. / 带物理的弹跳图块。
-    pub tiles: Vec<Tile>,
-    /// 2D camera (position, zoom, rotation). / 2D 相机（位置、缩放、旋转）。
-    pub camera: Camera2D,
-    /// Index of the tile under the cursor, if any. / 光标下方的图块索引。
-    pub hovered_tile: Option<usize>,
-    /// Grid spacing override (from const by default). / 网格间距（默认使用常量）。
-    pub grid_spacing: f32,
-    /// Font name for HUD text, from RJW_FONTNAME env or "SimHei". / HUD 字体名称。
-    pub font_name: String,
-    /// Custom Infomation, from RJW_TEXT env or ... / 显示文字。
-    pub custom_text: String,
-    /// Dynamic text atlas for HUD text rendering. / 用于 HUD 文字渲染的动态文字图集。
-    pub atlas_text: atlas_text::AtlasText,
-    /// Sprite buffer for text glyphs from the atlas. / 来自图集的文字字形精灵缓冲区。
-    pub text_buf: Sprite2DBuffer<TextureInfoArced, Transform2D>,
-    /// Pipeline-sorted sprite buffer for batch rendering.
-    /// 用于批渲染的流水线排序精灵缓冲区。
-    pub sprite_buf: Sprite2DBuffer<TextureInfoArced, Transform2D>,
-}
-
-/// A single bouncing sprite tile.
-/// 单个弹跳精灵图块。
-///
-/// Each tile has position, velocity, rotation, angular velocity, scale,
-/// a sprite rectangle, a collider shape, and a colour.
-/// 每个图块包含位置、速度、旋转、角速度、缩放、精灵矩形、碰撞体形状和颜色。
-pub struct Tile {
-    /// World-space position. / 世界空间位置。
-    pos: Vec2,
-    /// Velocity in world-units/sec. / 速度（世界单位/秒）。
-    vel: Vec2,
-    /// Current rotation in radians. / 当前旋转（弧度）。
-    rot: f32,
-    /// Angular velocity in rad/sec. / 角速度（弧度/秒）。
-    rot_vel: f32,
-    /// Scale factor. / 缩放因子。
-    scale: f32,
-    /// Sprite geometry (UV rect). / 精灵几何（UV 矩形）。
-    sprite_rect: Sprite2D,
-    /// Collider shape for hit-testing. / 用于碰撞检测的碰撞体形状。
-    collider: Collider,
-    /// RGBA colour. / RGBA 颜色。
-    color: [f32; 4],
-}
-
-/// Top-level application state.
-/// 顶层应用状态。
-///
-/// Event handling and input state are managed by `EventDriver`.
-/// 事件处理和输入状态由 `EventDriver` 管理。
-#[derive(Default)]
-pub struct App {
-    /// Loaded sound data keyed by name. / 按名称索引的已加载音效数据。
-    pub sounds: HashMap<String, StaticSoundData>,
-    /// Frame timer (FPS, delta time). / 帧计时器（FPS、帧间隔）。
-    pub timer: timer::Timer,
-    /// Runtime context — `None` before `run()`. / 运行时上下文——`run()` 前为 `None`。
-    pub ctx: Option<AppContext>,
-}
-
-/// Check if a key is currently pressed. / 检查按键是否处于按下状态。
-#[allow(unused)]
+/// Macro: check if a key is currently pressed.
 macro_rules! key_pressed {
     ($driver:expr, $key:expr) => {
         $driver.keyboard().get_key_state($key).is_pressed()
     };
 }
 
-/// Get the full key state. / 获取完整按键状态。
-#[allow(unused)]
+/// Macro: get the full key state.
 macro_rules! key_state {
     ($driver:expr, $key:expr) => {
         $driver.keyboard().get_key_state($key)
     };
 }
 
-/// Target frame duration (~60 FPS). / 目标帧时长（约 60 FPS）。
-// const FRAME_INTERVAL: f64 = 1.0 / 60.0;
+/// Spacing between grid lines in world units.
+const GRID_SPACING: f32 = 100.0;
+/// Grid line colour (RGBA).
+const GRID_COLOR: [f32; 4] = [0.15, 0.15, 0.15, 1.0];
+
+/// Runtime application context — holds engine resources via EngineContext.
+/// Also contains game-specific state: tiles, hover, custom_text, etc.
+pub struct App {
+    // ── Engine-level resources ──
+    pub ctx: Option<AppContext>,
+
+    // ── Game state ──
+    /// Loaded sound data keyed by name.
+    pub sounds: HashMap<String, StaticSoundData>,
+    /// Frame timer (FPS, delta time).
+    pub timer: Timer,
+}
+
+/// Holds all engine resources and game-specific data that used to be in AppContext.
+/// This is the merge of the original AppContext and the game-related fields.
+pub struct AppContext {
+    // ── Engine resources ──
+    pub window: winit::window::Window,
+    pub gfx: D3D11,
+    pub audio_mgr: AudioManager,
+    pub batch: SpriteBatch2D,
+    pub textures: HashMap<String, Arc<TextureInfo>>,
+    pub shape_batch: ShapeBatch2D,
+    pub camera: Camera2D,
+    pub atlas_text: AtlasText,
+    pub text_buf: Sprite2DBuffer<TextureInfoArced, Transform2D>,
+    pub sprite_buf: Sprite2DBuffer<TextureInfoArced, Transform2D>,
+
+    // ── Game state ──
+    pub tiles: Vec<Tile>,
+    pub hovered_tile: Option<usize>,
+    pub grid_spacing: f32,
+    pub font_name: String,
+    pub custom_text: String,
+}
+
+/// A single bouncing sprite tile.
+pub struct Tile {
+    pos: Vec2,
+    vel: Vec2,
+    rot: f32,
+    rot_vel: f32,
+    scale: f32,
+    sprite_rect: Sprite2D,
+    collider: Collider,
+    color: [f32; 4],
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            ctx: None,
+            sounds: HashMap::new(),
+            timer: Timer::default(),
+        }
+    }
+}
 
 // ──────────────────────────────────────────────
 //  App — thread entry point & main loop
 // ──────────────────────────────────────────────
 impl App {
     /// Entry point for the App thread.
-    /// App 线程入口点。
-    ///
-    /// Initialises everything and runs the frame loop, receiving messages from the main thread.
-    /// 初始化所有内容，运行帧循环，从主线程接收消息。
+    /// Initialises everything and runs the frame loop.
     pub fn run(
         &mut self,
-        window: Window,
+        window: winit::window::Window,
         hwnd: isize,
-        rx: Receiver<crate::app::msg::AppMsg>,
+        rx: Receiver<AppMsg>,
     ) -> Result<()> {
-        // ── Window & GPU ───────────────────────────────────────
         use windows::Win32::Foundation::HWND;
         let gfx = D3D11::init_on_hwnd(HWND(hwnd as *mut _))
             .unwrap_or_else(|e| panic!("gfx::init: {:#}", e));
 
-        // Get initial window size
         let size = window.inner_size();
 
-        // ── Event driver ───────────────────────────────────────
+        // ── Event driver ──
         let mut driver = EventDriver::new(rx);
         driver.set_initial_window_size(size.width, size.height);
 
-        // ── Audio ──────────────────────────────────────────────
+        // ── Audio ──
         let audio_mgr = self.init_audio()?;
 
-        // ── Batches ────────────────────────────────────────────
+        // ── Batches ──
         let (batch, shape_batch) = Self::init_batches(&gfx)?;
 
-        // ── Texture ────────────────────────────────────────────
+        // ── Texture ──
         let textures = Self::init_textures(&gfx)?;
 
-        // ── Tiles ──────────────────────────────────────────────
+        // ── Tiles ──
         let tiles = Self::init_tiles(&textures);
 
-        // ── Camera ─────────────────────────────────────────────
-        let camera = self.init_camera(driver.window_size());
+        // ── Camera ──
+        let camera = Self::init_camera(driver.window_size());
 
         self.startup_info();
 
-        // ── Dynamic text atlas ─────────────────────────────────
+        // ── Dynamic text atlas ──
         let (font_name, atlas_text, text_buf, sprite_buf) = Self::init_text_system(&gfx)?;
 
         let custom_text = std::env::var("RJW_TEXT")
-        .unwrap_or("😂😂😊😂❤🌹😆😖🥪🥗🥞🥟🥩🍚🍤\n🛬✈🚊🚈🚝🚹🟧🟨🟩🟦🟪🟫⬛⬜🔹".to_string());
+            .unwrap_or("😂😂😊😂❤🌹😆😖🥪🥗🥞🥟🥩🍚🍤\n🛬✈🚊🚈🚝🚹🟧🟨🟩🟦🟪🟫⬛⬜🔹".to_string());
 
         self.ctx = Some(AppContext {
             window,
@@ -260,7 +170,7 @@ impl App {
             sprite_buf,
         });
 
-        // ── Main loop ──────────────────────────────────────────
+        // ── Main loop ──
         println!("[AppThread] entering main loop");
         self.main_loop(&mut driver)?;
         println!("[AppThread] main loop ended");
@@ -268,20 +178,17 @@ impl App {
         Ok(())
     }
 
-    /// Main loop — uses `EventDriver` for message processing and input state.
-    /// 主循环——使用 `EventDriver` 处理消息和输入状态。
+    /// Main loop — uses EventDriver for message processing and input state.
     fn main_loop(
         &mut self,
         driver: &mut EventDriver,
     ) -> Result<()> {
         loop {
-            // Poll all pending events from the channel
             let events = driver.poll_frame();
             if events.close_requested || events.disconnected {
                 break;
             }
 
-            // Handle window resize if dirty
             if driver.window_size_dirty() {
                 if let Some(ctx) = self.ctx.as_mut() {
                     let (w, h) = driver.window_size();
@@ -292,7 +199,6 @@ impl App {
                 driver.clear_window_size_dirty();
             }
 
-            // Run one frame
             let dt = self.delta_time();
             self.handle_camera_input(dt, driver);
             self.handle_sound_effects(driver);
@@ -304,14 +210,13 @@ impl App {
             ctx.gfx.present().context("gfx::present failed")?;
             self.timer.post_frame_fpsc(dt as f64);
 
-            // End frame — advance edge states
             driver.end_frame();
         }
 
         Ok(())
     }
 
-    pub fn startup_info(&self) {
+    fn startup_info(&self) {
         println!("赛博吸尘器 with Seth.png");
         println!("    ---- 🔪Aqua's idea");
         println!("操作方式：");
@@ -322,7 +227,7 @@ impl App {
         println!("  - X 键强力制动");
     }
 
-    pub fn init_audio(&mut self) -> Result<AudioManager> {
+    fn init_audio(&mut self) -> Result<AudioManager> {
         macro_rules! insert_snd {
             ($name:expr, $dir:expr) => {
                 self.sounds.insert(
@@ -422,7 +327,7 @@ impl App {
         tiles
     }
 
-    fn init_camera(&self, window_size: (u32, u32)) -> Camera2D {
+    fn init_camera(window_size: (u32, u32)) -> Camera2D {
         let ws = Vec2::new(window_size.0 as f32, window_size.1 as f32);
         Camera2D::new(ws)
     }
@@ -431,12 +336,12 @@ impl App {
         gfx: &D3D11,
     ) -> Result<(
         String,
-        atlas_text::AtlasText,
+        AtlasText,
         Sprite2DBuffer<TextureInfoArced, Transform2D>,
         Sprite2DBuffer<TextureInfoArced, Transform2D>,
     )> {
         let font_name = std::env::var("RJW_FONTNAME").unwrap_or_else(|_| "SimHei".to_string());
-        let atlas_text = atlas_text::AtlasText::new(&gfx.device, -20.0, 12000.0)?;
+        let atlas_text = AtlasText::new(&gfx.device, -20.0, 12000.0)?;
         let text_buf = Sprite2DBuffer::default();
         let sprite_buf = Sprite2DBuffer::default();
         Ok((font_name, atlas_text, text_buf, sprite_buf))
@@ -447,43 +352,13 @@ impl App {
 //  on_frame sub-functions (called every frame)
 // ──────────────────────────────────────────────
 impl App {
-    pub fn create_window(
-        event_loop: &winit::event_loop::ActiveEventLoop,
-    ) -> (winit::window::Window, isize) {
-        use winit::window::WindowAttributes;
-        use winit::raw_window_handle::HasWindowHandle;
-
-        let window = event_loop
-            .create_window(
-                WindowAttributes::default()
-                    .with_title("KrisuRJW")
-                    .with_inner_size(winit::dpi::Size::Logical(LogicalSize {
-                        width: 960.0,
-                        height: 600.0,
-                    }))
-                    .with_transparent(true),
-            )
-            .expect("window::create failed");
-
-        // Extract HWND on the main thread (window_handle has thread affinity).
-        let handle = window.window_handle().expect("window_handle failed");
-        let hwnd = match handle.as_raw() {
-            winit::raw_window_handle::RawWindowHandle::Win32(w) => w.hwnd.get() as isize,
-            _ => panic!("only Win32 windows are supported"),
-        };
-
-        (window, hwnd)
-    }
-
     /// Compute clamped delta time for this frame.
-    /// 计算并限制本帧的帧间隔。
     fn delta_time(&mut self) -> f64 {
         let dt = self.timer.pre_frame_and_get_delta_time() as f64;
         if dt > 0.2 { eprintln!("dt too long: {}", dt); 0.2 } else { dt }
     }
 
-    /// Handle camera movement (Q/E rotation, W/A/S/D translation, scroll zoom).
-    /// 处理相机移动（Q/E 旋转、W/A/S/D 平移、滚轮缩放）。
+    /// Handle camera movement.
     fn handle_camera_input(&mut self, dt: f64, driver: &EventDriver) {
         let ctx = self.ctx.as_mut().unwrap();
         let camera = &mut ctx.camera;
@@ -499,9 +374,7 @@ impl App {
             camera.rotation += rot_speed * dt as f32;
         }
 
-        // Zoom: prefer pixel wheel (touchpad), fall back to line wheel (mouse)
         if let Some(pixel) = driver.mouse().get_pixel_wheel() {
-            // PixelDelta values are large, scale down significantly
             if pixel.1 > 0.0 {
                 camera.zoom *= (zoom_speed * 0.02).powf(dt as f32 * pixel.1 as f32);
             }
@@ -535,7 +408,6 @@ impl App {
             camera.position += move_dir.normalize() * move_speed * dt as f32;
         }
 
-        // Viewport always matches window
         camera.viewport_pos = Vec2::splat(0.0f32);
         let (w, h) = driver.window_size();
         camera.viewport_size = Vec2::new(w as f32, h as f32);
@@ -544,7 +416,6 @@ impl App {
     }
 
     /// Play sound effects based on input events.
-    /// 根据输入事件播放音效。
     fn handle_sound_effects(&mut self, driver: &EventDriver) {
         let ctx = self.ctx.as_mut().unwrap();
         let audio_mgr = &mut ctx.audio_mgr;
@@ -565,10 +436,7 @@ impl App {
         }
     }
 
-    /// Update tile physics (position, velocity, rotation, mouse attraction, drag).
-    /// Also detects which tile is under the cursor (hover).
-    /// 更新图块物理（位置、速度、旋转、鼠标吸引力、空气阻力）。
-    /// 同时检测光标下方的图块（悬停）。
+    /// Update tile physics.
     fn update_tiles(&mut self, dt: f64, driver: &EventDriver) {
         let ctx = self.ctx.as_mut().unwrap();
         let camera = &mut ctx.camera;
@@ -617,8 +485,7 @@ impl App {
         }
     }
 
-    /// Update the window title with FPS and delta time.
-    /// 更新窗口标题（FPS 和帧间隔）。
+    /// Update window title with FPS and delta time.
     fn update_window_title(&mut self, dt: f64) {
         let ctx = self.ctx.as_mut().unwrap();
         ctx.window.set_title(
@@ -631,8 +498,7 @@ impl App {
         );
     }
 
-    /// Render the demo sprite pipeline (background logo sprites with shadow + push_buffered).
-    /// 渲染演示精灵流水线（带阴影的背景 Logo 精灵 + push_buffered）。
+    /// Render demo sprites (background logo with shadow + push_buffered).
     fn render_demo_sprites(&mut self) -> Result<()> {
         let ctx = self.ctx.as_mut().unwrap();
         let gfx = &ctx.gfx;
@@ -648,7 +514,6 @@ impl App {
 
         buf.clear();
 
-        // Helper closure: push a sprite + its shadow into buf
         let mut push_sprite = |obj: &Sprite2DObject<TextureInfoArced, Transform2D>| {
             let mut shadow = obj.clone();
             shadow.transform = shadow.transform.move_by(shadow_offset);
@@ -657,7 +522,6 @@ impl App {
             buf.push(obj);
         };
 
-        // seth2 full-size at origin
         let obj = Sprite2DObject {
             spr: Sprite2D {
                 origin_px: seth2_tex.size_vec2f() * 0.5,
@@ -672,7 +536,6 @@ impl App {
         };
         push_sprite(&obj);
 
-        // Seth full-size at 4 cardinal positions
         let base = Sprite2DObject {
             spr: Sprite2D {
                 origin_px: seth_tex.size_vec2f() * 0.5,
@@ -705,7 +568,6 @@ impl App {
     }
 
     /// Render the perspective grid.
-    /// 渲染透视网格。
     fn render_grid(&mut self) -> Result<()> {
         let ctx = self.ctx.as_mut().unwrap();
         let gfx = &ctx.gfx;
@@ -723,7 +585,6 @@ impl App {
     }
 
     /// Render tile sprites (shadow + colour) using push_buffered.
-    /// 渲染图块精灵（阴影 + 彩色）。
     fn render_tiles(&mut self) -> Result<()> {
         let ctx = self.ctx.as_mut().unwrap();
         let gfx = &ctx.gfx;
@@ -766,8 +627,7 @@ impl App {
         Ok(())
     }
 
-    /// Render collider outlines and the mouse cursor circle.
-    /// 渲染碰撞体轮廓和鼠标光标圆圈。
+    /// Render collider outlines and mouse cursor circle.
     fn render_colliders(&mut self, driver: &EventDriver) -> Result<()> {
         let ctx = self.ctx.as_mut().unwrap();
         let gfx = &ctx.gfx;
@@ -808,8 +668,7 @@ impl App {
         Ok(())
     }
 
-    /// Render the HUD text overlay (screen-space) using push_buffered.
-    /// 渲染 HUD 文字覆盖层（屏幕空间）。
+    /// Render HUD text overlay (screen-space) using push_buffered.
     fn render_hud(&mut self, dt: f64, driver: &EventDriver) -> Result<()> {
         let ctx = self.ctx.as_mut().unwrap();
         let gfx = &ctx.gfx;
@@ -875,15 +734,13 @@ impl App {
         Ok(())
     }
 
-    /// Render a full frame: background, demo sprites, grid, tiles, colliders, HUD text.
-    /// 渲染完整帧：背景、演示精灵、网格、图块、碰撞体、HUD 文字。
+    /// Render a full frame.
     fn render_frame(&mut self, dt: f64, driver: &EventDriver) -> Result<()> {
         let (w, h) = driver.window_size();
         if w == 0 || h == 0 {
             return Ok(());
         }
 
-        // Set initial render state (blend, rasterizer, depth, sampler)
         {
             let ctx = self.ctx.as_ref().unwrap();
             let gfx = &ctx.gfx;
@@ -910,11 +767,11 @@ impl App {
     }
 }
 
+// ──────────────────────────────────────────────
+//  Utility functions (only used by App)
+// ──────────────────────────────────────────────
+
 /// Build a perspective grid of lines visible within the camera frustum.
-/// 构建相机视锥内可见的透视线网格。
-///
-/// Draws vertical and horizontal lines at `spacing` intervals, clamped to `max_lines`.
-/// 以 `spacing` 间隔绘制水平和垂直线，上限为 `max_lines`.
 fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, spacing: f32, color: [f32; 4]) {
     let hw = camera.viewport_size.x * 0.5 * camera.zoom.x;
     let hh = camera.viewport_size.y * 0.5 * camera.zoom.y;
@@ -963,11 +820,7 @@ fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, spacing: f32, color: [f3
     }
 }
 
-/// Draw the outline of a collider shape (rect/AABB/circle).
-/// 绘制碰撞体形状的轮廓（矩形/AABB/圆形）。
-///
-/// Transforms local-space vertices into world space using the instance transform.
-/// 使用实例变换将局部空间顶点变换到世界空间。
+/// Draw the outline of a collider shape.
 fn draw_collider_outline(sb: &mut ShapeBatch2D, inst: &ColliderInstance, color: [f32; 4]) {
     match inst.shape {
         Collider::Rect { half_size } | Collider::AABB { half_size } => {

@@ -19,14 +19,14 @@ use windows::Win32::Graphics::{Direct3D11::*, Dxgi::Common::*};
 
 use super::sprite2d::{HaveID, Sprite2D, Sprite2DBuffer, Sprite2DObject};
 use super::transform2d::Transform2D;
-use crate::app::graphic::d3d11::D3D11;
-use crate::app::graphic::d3d11::d3d11_utils::{TextureInfo, create_srv, create_texture_2d};
+use crate::graphic::d3d11::D3D11;
+use crate::graphic::d3d11::d3d11_utils::{TextureInfo, create_srv, create_texture_2d};
 
 // ─────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────
 
-use super::TextureInfoArced;
+use crate::TextureInfoArced;
 
 /// Atlas page width & height in pixels.
 const PAGE_SIZE: u32 = 2048;

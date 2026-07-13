@@ -1,5 +1,5 @@
-//! Main-thread handler that forwards winit events to the App thread via MPSC.
-//! 主线程处理器——通过 MPSC 将 winit 事件转发给 App 线程。
+//! Generic main-thread handler that forwards winit events to an application thread via MPSC.
+//! 通用主线程处理器——通过 MPSC 将 winit 事件转发给应用线程。
 
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
@@ -7,44 +7,78 @@ use std::thread::{self, JoinHandle};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, WindowEvent};
 
-use super::app::msg::AppMsg;
-use super::app::mouse_input::MouseButton;
-use super::app::App;
+use crate::msg::AppMsg;
+use crate::mouse_input::MouseButton;
 
-/// Main-thread handler that holds the channel sender and thread handle.
-/// 主线程处理器——持有通道发送端和线程句柄。
-pub struct AppHandler {
+/// Generic main-thread handler that holds the channel sender and thread handle.
+/// 通用主线程处理器——持有通道发送端和线程句柄。
+///
+/// Takes a closure `app_init` that receives `(Window, isize, Receiver<AppMsg>)`
+/// and returns `anyhow::Result<()>`. This closure is called once on `resumed()`
+/// to spawn the application thread.
+/// 接受一个 `app_init` 闭包，收到 `(Window, isize, Receiver<AppMsg>)`，
+/// 返回 `anyhow::Result<()>`。该闭包在 `resumed()` 时调用一次，用于启动应用线程。
+pub struct EngineHandler {
     msg_queue: Option<mpsc::Sender<AppMsg>>,
     app_thread: Option<JoinHandle<()>>,
     exit_requested: bool,
+    /// Closure to initialise and run the application on a dedicated thread.
+    /// 在专用线程上初始化和运行应用的闭包。
+    app_init: Option<Box<dyn FnOnce(winit::window::Window, isize, mpsc::Receiver<AppMsg>) -> anyhow::Result<()> + Send>>,
 }
 
-impl Default for AppHandler {
-    fn default() -> Self {
+impl EngineHandler {
+    /// Create a new `EngineHandler` with the given application initialiser.
+    /// 用给定的应用初始化器创建 `EngineHandler`。
+    pub fn new(
+        app_init: impl FnOnce(winit::window::Window, isize, mpsc::Receiver<AppMsg>) -> anyhow::Result<()> + Send + 'static,
+    ) -> Self {
         Self {
             msg_queue: None,
             app_thread: None,
             exit_requested: false,
+            app_init: Some(Box::new(app_init)),
         }
     }
 }
 
-impl ApplicationHandler for AppHandler {
+impl ApplicationHandler for EngineHandler {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        println!("[AppHandler] resumed — creating window & spawning App thread");
+        println!("[EngineHandler] resumed — creating window & spawning App thread");
 
         // 1. Create the window + extract HWND on the main thread
-        let (window, hwnd) = App::create_window(event_loop);
+        use winit::dpi::LogicalSize;
+        use winit::raw_window_handle::HasWindowHandle;
+        use winit::window::WindowAttributes;
+
+        let window = event_loop
+            .create_window(
+                WindowAttributes::default()
+                    .with_title("KrisuRJW")
+                    .with_inner_size(winit::dpi::Size::Logical(LogicalSize {
+                        width: 960.0,
+                        height: 600.0,
+                    }))
+                    .with_transparent(true),
+            )
+            .expect("window::create failed");
+
+        let handle = window.window_handle().expect("window_handle failed");
+        let hwnd = match handle.as_raw() {
+            winit::raw_window_handle::RawWindowHandle::Win32(w) => w.hwnd.get() as isize,
+            _ => panic!("only Win32 windows are supported"),
+        };
 
         // 2. Create MPSC channel
         let (tx, rx) = mpsc::channel::<AppMsg>();
 
-        // 3. Spawn the App thread — moves window, hwnd and rx in
+        // 3. Take the app_init closure and spawn the App thread
+        let init = self.app_init.take()
+            .expect("EngineHandler::resumed called more than once");
         let handle = thread::Builder::new()
             .name("app-thread".into())
             .spawn(move || {
-                let mut app = App::default();
-                if let Err(e) = app.run(window, hwnd, rx) {
+                if let Err(e) = init(window, hwnd, rx) {
                     eprintln!("[AppThread] fatal error: {:#}", e);
                 } else {
                     println!("[AppThread] exited cleanly");
@@ -76,7 +110,7 @@ impl ApplicationHandler for AppHandler {
         let msg = match event {
             WindowEvent::RedrawRequested => return, // ignore, App thread drives itself
             WindowEvent::CloseRequested => {
-                println!("[AppHandler] CloseRequested → sending to App thread");
+                println!("[EngineHandler] CloseRequested → sending to App thread");
                 self.exit_requested = true;
                 let _ = tx.send(AppMsg::CloseRequested);
                 event_loop.exit();
@@ -145,7 +179,7 @@ impl ApplicationHandler for AppHandler {
     }
 }
 
-impl Drop for AppHandler {
+impl Drop for EngineHandler {
     fn drop(&mut self) {
         drop(self.msg_queue.take());
         if let Some(handle) = self.app_thread.take() {
