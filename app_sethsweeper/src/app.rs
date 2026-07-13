@@ -15,19 +15,18 @@ use winit::keyboard::KeyCode;
 use kira::{AudioManager, DefaultBackend, sound::static_sound::StaticSoundData};
 
 use krjw_engine::{
-    self,
+    self, AppMsg, TextureInfoArced, Timer,
     atlas_text::AtlasText,
     camera2d::Camera2D,
     collider::{Collider, ColliderInstance},
     event_driver::EventDriver,
-    mouse_input::MouseButton,
-    sprite2d::{Sprite2D, Sprite2DBuffer, Sprite2DObject},
-    transform2d::Transform2D,
     graphic::d3d11::D3D11,
     graphic::d3d11::d3d11_utils::*,
     graphic::d3d11::shape_batch_2d::ShapeBatch2D,
-    graphic::d3d11::sprite_batch_2d::{SpriteBatch2D},
-    TextureInfoArced, Timer, AppMsg,
+    graphic::d3d11::sprite_batch_2d::SpriteBatch2D,
+    mouse_input::MouseButton,
+    sprite2d::{Sprite2D, Sprite2DBuffer, Sprite2DObject},
+    transform2d::Transform2D,
 };
 
 /// Macro: check if a key is currently pressed.
@@ -179,10 +178,7 @@ impl App {
     }
 
     /// Main loop — uses EventDriver for message processing and input state.
-    fn main_loop(
-        &mut self,
-        driver: &mut EventDriver,
-    ) -> Result<()> {
+    fn main_loop(&mut self, driver: &mut EventDriver) -> Result<()> {
         loop {
             let events = driver.poll_frame();
             if events.close_requested || events.disconnected {
@@ -239,13 +235,10 @@ impl App {
         insert_snd!("snd_ominous_cancel", "../snd_ominous_cancel.wav");
         insert_snd!("snd_ominous", "../snd_ominous.wav");
 
-        AudioManager::<DefaultBackend>::new(Default::default())
-            .context("AudioManager::new failed")
+        AudioManager::<DefaultBackend>::new(Default::default()).context("AudioManager::new failed")
     }
 
-    fn init_batches(
-        gfx: &D3D11,
-    ) -> Result<(SpriteBatch2D, ShapeBatch2D)> {
+    fn init_batches(gfx: &D3D11) -> Result<(SpriteBatch2D, ShapeBatch2D)> {
         let batch = SpriteBatch2D::new(
             &gfx.device,
             2048,
@@ -263,9 +256,7 @@ impl App {
         Ok((batch, shape_batch))
     }
 
-    fn init_textures(
-        gfx: &D3D11,
-    ) -> Result<HashMap<String, Arc<TextureInfo>>> {
+    fn init_textures(gfx: &D3D11) -> Result<HashMap<String, Arc<TextureInfo>>> {
         let mut textures = HashMap::new();
         macro_rules! insert_tex {
             ($name:expr, $dir:expr) => {
@@ -291,7 +282,7 @@ impl App {
         let cell_h = texture.height as f32 / h_count as f32;
 
         let mut tiles = Vec::new();
-        for i in 0..w_count*h_count {
+        for i in 0..w_count * h_count {
             let cx = (i % w_count) as f32 * cell_w;
             let cy = (i / w_count) as f32 * cell_h;
             let angle = i as f32 * 1.3;
@@ -355,7 +346,12 @@ impl App {
     /// Compute clamped delta time for this frame.
     fn delta_time(&mut self) -> f64 {
         let dt = self.timer.pre_frame_and_get_delta_time() as f64;
-        if dt > 0.2 { eprintln!("dt too long: {}", dt); 0.2 } else { dt }
+        if dt > 0.2 {
+            eprintln!("dt too long: {}", dt);
+            0.2
+        } else {
+            dt
+        }
     }
 
     /// Handle camera movement.
@@ -563,7 +559,9 @@ impl App {
             push_sprite(&obj);
         }
 
-        batch.push_buffered(gfx, &vp_transposed, buf, |xform| (xform.pos, xform.scale, xform.rot));
+        batch.push_buffered(gfx, &vp_transposed, buf, |xform| {
+            (xform.pos, xform.scale, xform.rot)
+        });
         Ok(())
     }
 
@@ -623,7 +621,9 @@ impl App {
             });
         }
 
-        batch.push_buffered(gfx, &vp_transposed, buf, |xform| (xform.pos, xform.scale, xform.rot));
+        batch.push_buffered(gfx, &vp_transposed, buf, |xform| {
+            (xform.pos, xform.scale, xform.rot)
+        });
         Ok(())
     }
 
@@ -729,7 +729,9 @@ impl App {
         ctx.atlas_text.upload(gfx)?;
 
         let batch = &mut ctx.batch;
-        batch.push_buffered(gfx, &hud_vp, &mut ctx.text_buf, |xform| (xform.pos, xform.scale, xform.rot));
+        batch.push_buffered(gfx, &hud_vp, &mut ctx.text_buf, |xform| {
+            (xform.pos, xform.scale, xform.rot)
+        });
 
         Ok(())
     }
