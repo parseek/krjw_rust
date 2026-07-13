@@ -173,22 +173,6 @@ where
     /// - `ex` — external context passed to both closures (e.g. a `SpriteBatch2D`) / 传递给两个 closure 的外部上下文
     /// - `on_pipeline_change` — called **before** the first item and whenever `pipeline.get_id()` changes / 首次及 pipeline 切换时调用
     /// - `on_item` — called for each sprite in sorted order / 按序每个精灵调用一次
-    ///
-    /// # Example / 示例
-    ///
-    /// ```ignore
-    /// buf.for_each_sorted(
-    ///     batch,
-    ///     |batch, pipeline| {
-    ///         batch.submit_and_draw(gfx).ok();
-    ///         batch.clear_batch();
-    ///         batch.set_texture(pipeline.0.srv.clone(), ...);
-    ///     },
-    ///     |batch, obj| {
-    ///         batch.add(obj.transform.pos, ...);
-    ///     },
-    /// );
-    /// ```
     pub fn for_each_sorted<B, F, G>(
         &mut self,
         ex: &mut B,

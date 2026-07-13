@@ -7,7 +7,15 @@ use windows::{
 
 use super::D3D11;
 use super::d3d11_utils::{self, write_buffer};
-use crate::app::sprite2d::Sprite2D;
+use crate::app::sprite2d::{Sprite2D, HaveID, Sprite2DBuffer, Sprite2DObject};
+
+/// Trait for types that can bind themselves to a batch as a rendering pipeline.
+/// 可以绑定到批处理作为渲染流水线的类型 trait。
+pub trait Pipeline: HaveID + Clone {
+    /// Apply this pipeline to the batch (e.g. set texture/sampler/shader state).
+    /// 将此流水线应用到批处理（例如设置纹理/采样器/着色器状态）。
+    fn apply_to_batch(&self, batch: &mut SpriteBatch2D);
+}
 
 #[allow(unused)]
 #[derive(Copy, Clone)]
@@ -245,5 +253,41 @@ impl SpriteBatch2D {
 
     pub fn count(&self) -> usize {
         self.vertices.len()
+    }
+
+    /// Push a `Sprite2DBuffer` into the batch with automatic pipeline switching.
+    /// 将 `Sprite2DBuffer` 压入 batch，自动处理 pipeline 切换。
+    ///
+    /// - Clears the batch before starting / 开始前清空 batch
+    /// - Calls `pipeline.apply_to_batch()` to set up each new pipeline / 每次切换 pipeline 时调用
+    /// - Calls `extract_transform` to extract `(pos, scale, rot)` from the sprite's transform / 用 `extract_transform` 提取变换数据
+    /// - Calls `submit_and_draw` at the end / 最后提交绘制
+    pub fn push_buffered<T, U>(
+        &mut self,
+        gfx: &D3D11,
+        vp: &glam::Mat4,
+        buf: &mut Sprite2DBuffer<T, U>,
+        extract_transform: impl Fn(&U) -> (Vec2, Vec2, f32),
+    ) where
+        T: Pipeline,
+        U: Clone,
+    {
+        self.set_mvp(gfx, vp);
+        self.clear_batch();
+
+        buf.for_each_sorted(
+            self,
+            |batch, pp| {
+                batch.submit_and_draw(gfx).ok();
+                batch.clear_batch();
+                pp.apply_to_batch(batch);
+            },
+            |batch, spr| {
+                let (pos, scale, rot) = extract_transform(&spr.transform);
+                batch.add(pos, scale, rot, &spr.spr, spr.color).ok();
+            },
+        );
+
+        self.submit_and_draw(gfx).ok();
     }
 }

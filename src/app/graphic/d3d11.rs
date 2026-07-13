@@ -41,6 +41,7 @@ pub struct D3D11 {
     pub states: StateObjects,
 }
 
+#[allow(dead_code)]
 fn get_hwnd(window: &Window) -> HWND {
     let handle = window.window_handle().unwrap();
     let handle = handle.as_raw();
@@ -168,7 +169,7 @@ impl D3D11 {
                 .GetParent()
                 .context("IDXGIAdapter::GetParent<IDXGIFactory> failed")?;
             dxgi_factory
-                .MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER)
+                .MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER | DXGI_MWA_NO_WINDOW_CHANGES)
                 .context("IDXGIFactory::MakeWindowAssociation failed")?;
         }
 

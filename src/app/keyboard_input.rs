@@ -24,6 +24,32 @@ impl KeyboardInput {
             *key_state = key_state.off_edge();
         }
     }
+    /// Handle an AppMsg directly, bypassing winit event synthesis.
+    /// 直接处理 AppMsg，绕过 winit 事件合成。
+    pub fn handle_msg(&mut self, msg: &crate::app::msg::AppMsg) {
+        use crate::app::msg::AppMsg;
+        if let AppMsg::KeyboardInput { key_code, state } = msg {
+            let key_state = self.key_map.entry(*key_code).or_insert(KEY_STATE_RELEASED);
+            let new_key_state = match state {
+                winit::event::ElementState::Pressed => {
+                    if key_state.is_pressed() {
+                        KEY_STATE_DOWN_EDGE
+                    } else {
+                        KEY_STATE_DOWN_TRUE_EDGE
+                    }
+                }
+                winit::event::ElementState::Released => {
+                    if key_state.is_released() {
+                        KEY_STATE_UP_EDGE
+                    } else {
+                        KEY_STATE_UP_TRUE_EDGE
+                    }
+                }
+            };
+            *key_state = new_key_state;
+        }
+    }
+
     pub fn window_event(&mut self, event: &winit::event::WindowEvent) {
         match event {
             WindowEvent::KeyboardInput {

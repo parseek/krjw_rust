@@ -2,7 +2,7 @@ use super::key_state::*;
 use glam::Vec2;
 use winit::event::WindowEvent;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum MouseButton {
     Left = 0,
     Right = 1,
@@ -16,7 +16,8 @@ pub struct MouseInput {
     mouse_position: (f64, f64),
     mouse_delta: (f64, f64),
     mouse_buttons: [KeyState; 5],  // Left, Right, Middle, X1, X2
-    mouse_wheel_delta: (f64, f64), // x, y
+    mouse_wheel_delta: (f64, f64), // LineDelta (x, y), accumulated
+    pixel_wheel: Option<(f64, f64)>, // PixelDelta, accumulated per frame
     in_window: bool,
 }
 
@@ -46,12 +47,71 @@ impl MouseInput {
     pub fn is_in_window(&self) -> bool {
         self.in_window
     }
+    #[allow(unused)]
+    pub fn get_pixel_wheel(&self) -> Option<(f64, f64)> {
+        self.pixel_wheel
+    }
     pub fn end_frame(&mut self) {
         for button_state in self.mouse_buttons.iter_mut() {
             *button_state = button_state.off_edge();
         }
         self.mouse_delta = (0.0, 0.0);
         self.mouse_wheel_delta = (0.0, 0.0);
+        self.pixel_wheel = None;
+    }
+
+    /// Handle an AppMsg directly, bypassing winit event synthesis.
+    /// 直接处理 AppMsg，绕过 winit 事件合成。
+    pub fn handle_msg(&mut self, msg: &crate::app::msg::AppMsg) {
+        use crate::app::msg::AppMsg;
+        match msg {
+            AppMsg::CursorMoved(x, y) => {
+                self.mouse_position = (*x, *y);
+            }
+            AppMsg::CursorEntered => {
+                self.in_window = true;
+            }
+            AppMsg::CursorLeft => {
+                self.in_window = false;
+            }
+            AppMsg::MouseWheel(x, y) => {
+                self.mouse_wheel_delta.0 += x;
+                self.mouse_wheel_delta.1 += y;
+            }
+            AppMsg::MouseWheelPixel(x, y) => {
+                let current = self.pixel_wheel.unwrap_or((0.0, 0.0));
+                self.pixel_wheel = Some((current.0 + x, current.1 + y));
+            }
+            AppMsg::MouseInput { button, state } => {
+                let button_index = *button as usize;
+                if button_index >= 5 {
+                    return;
+                }
+                let key_state = &mut self.mouse_buttons[button_index];
+                let new_state = match state {
+                    winit::event::ElementState::Pressed => {
+                        if key_state.is_pressed() {
+                            KEY_STATE_DOWN_EDGE
+                        } else {
+                            KEY_STATE_DOWN_TRUE_EDGE
+                        }
+                    }
+                    winit::event::ElementState::Released => {
+                        if key_state.is_released() {
+                            KEY_STATE_UP_EDGE
+                        } else {
+                            KEY_STATE_UP_TRUE_EDGE
+                        }
+                    }
+                };
+                *key_state = new_state;
+            }
+            AppMsg::MouseMotion(dx, dy) => {
+                self.mouse_delta.0 += dx;
+                self.mouse_delta.1 += dy;
+            }
+            _ => {}
+        }
     }
     #[allow(unused)]
     pub fn get_mouse_button_states_iter(
