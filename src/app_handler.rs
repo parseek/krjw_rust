@@ -7,9 +7,9 @@ use std::thread::{self, JoinHandle};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, WindowEvent};
 
-use crate::app::msg::AppMsg;
-use crate::app::mouse_input::MouseButton;
-use crate::app::App;
+use super::app::msg::AppMsg;
+use super::app::mouse_input::MouseButton;
+use super::app::App;
 
 /// Main-thread handler that holds the channel sender and thread handle.
 /// 主线程处理器——持有通道发送端和线程句柄。
