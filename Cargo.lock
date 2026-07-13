@@ -123,6 +123,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "app_shapes"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glam 0.29.3",
+ "krjw_engine",
+ "windows",
+ "winit",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -17,7 +17,7 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut handler = EngineHandler::new(|window, hwnd, rx| {
-        let mut app = app::App::default();
+        let mut app = app::App::new();
         app.run(window, hwnd, rx)
     });
     event_loop

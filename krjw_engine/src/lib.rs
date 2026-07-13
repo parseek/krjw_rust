@@ -10,11 +10,18 @@ pub mod key_state;
 pub mod keyboard_input;
 pub mod mouse_input;
 pub mod msg;
+
+#[allow(unused)]
 pub mod sprite2d;
+#[allow(unused)]
 pub mod transform2d;
+#[allow(unused)]
 pub mod camera2d;
+#[allow(unused)]
 pub mod collider;
+#[allow(unused)]
 pub mod atlas_text;
+#[allow(unused)]
 pub mod timer;
 
 // ── Re-exports ─────────────────────────────────────────────
@@ -34,7 +41,7 @@ pub use timer::Timer;
 
 pub use graphic::d3d11::D3D11;
 pub use graphic::d3d11::d3d11_utils::TextureInfo;
-pub use graphic::d3d11::sprite_batch_2d::{SpriteBatch2D, Pipeline};
+pub use graphic::d3d11::sprite_batch_2d::{SpriteBatch2D, self};
 pub use graphic::d3d11::shape_batch_2d::ShapeBatch2D;
 
 // ── TextureInfoArced (originally from app.rs) ──────────────
@@ -55,7 +62,7 @@ impl HaveID for TextureInfoArced {
     }
 }
 
-impl Pipeline for TextureInfoArced {
+impl sprite_batch_2d::Pipeline for TextureInfoArced {
     fn apply_to_batch(&self, batch: &mut SpriteBatch2D) {
         batch.set_texture(self.0.srv.clone(), self.0.width, self.0.height);
     }

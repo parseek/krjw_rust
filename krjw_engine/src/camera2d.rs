@@ -19,6 +19,25 @@ pub struct Camera2D {
 
 #[allow(unused)]
 impl Camera2D {
+    pub fn move_by(&mut self, position: Vec2) {
+        self.position += position;
+    }
+    pub fn walk_xy(&mut self, xy: Vec2) {
+        let (sin, cos) = self.rotation.sin_cos();
+        self.position += Vec2::new(xy.x * cos - xy.y * sin, xy.x * sin + xy.y * cos);
+    }
+    pub fn walk_xplus(&mut self, xplus: f32) {
+        let (sin, cos) = self.rotation.sin_cos();
+        self.position += Vec2::new(cos, sin ) * xplus;
+    }
+    pub fn walk_yplus(&mut self, yplus: f32) {
+        let (sin, cos) = self.rotation.sin_cos();
+        self.position += Vec2::new(-sin, cos ) * yplus;
+    }
+}
+
+#[allow(unused)]
+impl Camera2D {
     /// Create a camera that covers the entire window.
     pub fn new(window_size_px: Vec2) -> Self {
         Self {

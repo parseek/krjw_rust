@@ -8,7 +8,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
-use anyhow::{Context, Result};
+use anyhow::{Result, Context};
 use glam::Vec2;
 use winit::keyboard::KeyCode;
 
@@ -48,35 +48,29 @@ const GRID_SPACING: f32 = 100.0;
 /// Grid line colour (RGBA).
 const GRID_COLOR: [f32; 4] = [0.15, 0.15, 0.15, 1.0];
 
-/// Runtime application context — holds engine resources via EngineContext.
-/// Also contains game-specific state: tiles, hover, custom_text, etc.
-pub struct App {
-    // ── Engine-level resources ──
-    pub ctx: Option<AppContext>,
-
-    // ── Game state ──
-    /// Loaded sound data keyed by name.
-    pub sounds: HashMap<String, StaticSoundData>,
-    /// Frame timer (FPS, delta time).
-    pub timer: Timer,
-}
-
-/// Holds all engine resources and game-specific data that used to be in AppContext.
-/// This is the merge of the original AppContext and the game-related fields.
+/// Engine resources created after window initialisation.
+/// 窗口初始化后创建的引擎资源。
 pub struct AppContext {
-    // ── Engine resources ──
     pub window: winit::window::Window,
     pub gfx: D3D11,
     pub audio_mgr: AudioManager,
     pub batch: SpriteBatch2D,
-    pub textures: HashMap<String, Arc<TextureInfo>>,
     pub shape_batch: ShapeBatch2D,
     pub camera: Camera2D,
     pub atlas_text: AtlasText,
-    pub text_buf: Sprite2DBuffer<TextureInfoArced, Transform2D>,
     pub sprite_buf: Sprite2DBuffer<TextureInfoArced, Transform2D>,
+    pub textures: HashMap<String, Arc<TextureInfo>>,
+}
+
+/// Top-level application state.
+pub struct App {
+    /// Engine resources (created after `run()`).
+    /// 引擎资源（`run()` 后创建）。
+    pub ctx: Option<AppContext>,
 
     // ── Game state ──
+    pub sounds: HashMap<String, StaticSoundData>,
+    pub timer: Timer,
     pub tiles: Vec<Tile>,
     pub hovered_tile: Option<usize>,
     pub grid_spacing: f32,
@@ -96,12 +90,19 @@ pub struct Tile {
     color: [f32; 4],
 }
 
-impl Default for App {
-    fn default() -> Self {
+impl App {
+    /// Create a new App with default state.
+    /// 创建默认状态的 App。
+    pub fn new() -> Self {
         Self {
             ctx: None,
             sounds: HashMap::new(),
             timer: Timer::default(),
+            tiles: Vec::new(),
+            hovered_tile: None,
+            grid_spacing: GRID_SPACING,
+            font_name: "SimHei".to_string(),
+            custom_text: String::new(),
         }
     }
 }
@@ -138,7 +139,7 @@ impl App {
         let textures = Self::init_textures(&gfx)?;
 
         // ── Tiles ──
-        let tiles = Self::init_tiles(&textures);
+        self.tiles = Self::init_tiles(&textures);
 
         // ── Camera ──
         let camera = Self::init_camera(driver.window_size());
@@ -146,9 +147,9 @@ impl App {
         self.startup_info();
 
         // ── Dynamic text atlas ──
-        let (font_name, atlas_text, text_buf, sprite_buf) = Self::init_text_system(&gfx)?;
-
-        let custom_text = std::env::var("RJW_TEXT")
+        let (font_name, atlas_text, sprite_buf) = Self::init_text_system(&gfx)?;
+        self.font_name = font_name;
+        self.custom_text = std::env::var("RJW_TEXT")
             .unwrap_or("😂😂😊😂❤🌹😆😖🥪🥗🥞🥟🥩🍚🍤\n🛬✈🚊🚈🚝🚹🟧🟨🟩🟦🟪🟫⬛⬜🔹".to_string());
 
         self.ctx = Some(AppContext {
@@ -158,14 +159,8 @@ impl App {
             batch,
             textures,
             shape_batch,
-            tiles,
             camera,
-            hovered_tile: None,
-            grid_spacing: GRID_SPACING,
-            font_name,
-            custom_text,
             atlas_text,
-            text_buf,
             sprite_buf,
         });
 
@@ -178,7 +173,10 @@ impl App {
     }
 
     /// Main loop — uses EventDriver for message processing and input state.
-    fn main_loop(&mut self, driver: &mut EventDriver) -> Result<()> {
+    fn main_loop(
+        &mut self,
+        driver: &mut EventDriver,
+    ) -> Result<()> {
         loop {
             let events = driver.poll_frame();
             if events.close_requested || events.disconnected {
@@ -329,13 +327,11 @@ impl App {
         String,
         AtlasText,
         Sprite2DBuffer<TextureInfoArced, Transform2D>,
-        Sprite2DBuffer<TextureInfoArced, Transform2D>,
     )> {
         let font_name = std::env::var("RJW_FONTNAME").unwrap_or_else(|_| "SimHei".to_string());
         let atlas_text = AtlasText::new(&gfx.device, -20.0, 12000.0)?;
-        let text_buf = Sprite2DBuffer::default();
         let sprite_buf = Sprite2DBuffer::default();
-        Ok((font_name, atlas_text, text_buf, sprite_buf))
+        Ok((font_name, atlas_text, sprite_buf))
     }
 }
 
@@ -444,8 +440,8 @@ impl App {
             .get_mouse_button_state(MouseButton::Left)
             .is_pressed();
 
-        ctx.hovered_tile = None;
-        for (idx, tile) in ctx.tiles.iter_mut().enumerate().rev() {
+        self.hovered_tile = None;
+        for (idx, tile) in self.tiles.iter_mut().enumerate().rev() {
             tile.pos += tile.vel * dt as f32;
             tile.rot += tile.rot_vel * dt as f32;
 
@@ -475,8 +471,8 @@ impl App {
                     rot: tile.rot,
                 },
             };
-            if inst.contains_point(world_mouse) && ctx.hovered_tile.is_none() {
-                ctx.hovered_tile = Some(idx);
+            if inst.contains_point(world_mouse) && self.hovered_tile.is_none() {
+                self.hovered_tile = Some(idx);
             }
         }
     }
@@ -574,7 +570,7 @@ impl App {
 
         let sb = &mut ctx.shape_batch;
         sb.clear_batch();
-        build_grid(sb, camera, ctx.grid_spacing, GRID_COLOR);
+        build_grid(sb, camera, self.grid_spacing, GRID_COLOR);
         sb.set_mvp(gfx, &vp_transposed);
         sb.submit_and_draw(gfx)
             .context("grid submit_and_draw failed")?;
@@ -594,7 +590,7 @@ impl App {
 
         buf.clear();
         let seth_pipeline = TextureInfoArced(seth_tex.clone());
-        for tile in &ctx.tiles {
+        for tile in &self.tiles {
             // Shadow
             buf.push(&Sprite2DObject {
                 transform: Transform2D {
@@ -636,7 +632,7 @@ impl App {
 
         let sb = &mut ctx.shape_batch;
         sb.clear_batch();
-        for (idx, tile) in ctx.tiles.iter().enumerate() {
+        for (idx, tile) in self.tiles.iter().enumerate() {
             let inst = ColliderInstance {
                 shape: &tile.collider,
                 xform: Transform2D {
@@ -645,7 +641,7 @@ impl App {
                     rot: tile.rot,
                 },
             };
-            let color = if Some(idx) == ctx.hovered_tile {
+            let color = if Some(idx) == self.hovered_tile {
                 [1.0, 0.8, 0.0, 0.8]
             } else {
                 [0.0, 1.0, 0.0, 0.3]
@@ -695,14 +691,14 @@ impl App {
             "FPS: {:.2} | Delta: {:.05}ms\nHello, Rust! 🦀\nKrisuRJW - Atlas Renderer　渲染文字到２Ｄ精灵✔✔✔\n　ゆっくりしていってね (❁´◡`❁)\n{}",
             self.timer.get_fps(),
             dt,
-            ctx.custom_text,
+            self.custom_text,
         );
 
-        ctx.text_buf.clear();
+        ctx.sprite_buf.clear();
         let layout = ctx.atlas_text.layout_text(
             &text_to_display,
             Metrics::new(24.0, 32.0),
-            Attrs::new().family(Family::Name(&ctx.font_name)),
+            Attrs::new().family(Family::Name(&self.font_name)),
             Shaping::Advanced,
             &gfx.device,
         )?;
@@ -713,7 +709,7 @@ impl App {
             Vec2::new(10.0, 6.0),
             [0.0, 0.0, 0.0, 0.75],
             0.0,
-            &mut ctx.text_buf,
+            &mut ctx.sprite_buf,
         );
 
         // Primary text
@@ -722,14 +718,14 @@ impl App {
             Vec2::new(8.0, 4.0),
             [1.0, 1.0, 1.0, 1.0],
             0.0,
-            &mut ctx.text_buf,
+            &mut ctx.sprite_buf,
         );
 
         // Upload atlas dirty pages to GPU before rendering
         ctx.atlas_text.upload(gfx)?;
 
         let batch = &mut ctx.batch;
-        batch.push_buffered(gfx, &hud_vp, &mut ctx.text_buf, |xform| {
+        batch.push_buffered(gfx, &hud_vp, &mut ctx.sprite_buf, |xform| {
             (xform.pos, xform.scale, xform.rot)
         });
 

@@ -116,7 +116,7 @@ impl SkylinePacker {
 
     fn insert_segment(&mut self, idx: usize, new_seg: Segment) {
         let new_right = new_seg.x + new_seg.width;
-        let mut insert_pos = idx;
+        let insert_pos = idx;
         while insert_pos < self.skylines.len() && self.skylines[insert_pos].x < new_right {
             let seg = &mut self.skylines[insert_pos];
             let seg_right = seg.x + seg.width;
@@ -150,14 +150,17 @@ impl SkylinePacker {
         }
     }
 
-    fn clear(&mut self) {
-        self.skylines.clear();
-        self.skylines.push(Segment {
-            x: 0,
-            y: 0,
-            width: self.page_size,
-        });
-    }
+    // Theorically, in no case this method should be called.
+    // 理论上来讲，没有使用这个函数的情况
+    //
+    // fn clear(&mut self) {
+    //     self.skylines.clear();
+    //     self.skylines.push(Segment {
+    //         x: 0,
+    //         y: 0,
+    //         width: self.page_size,
+    //     });
+    // }
 }
 
 // ─────────────────────────────────────────────────────────────────────
