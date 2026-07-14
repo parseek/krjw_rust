@@ -112,14 +112,13 @@ impl App {
             let events = driver.poll_frame();
             if events.close_requested || events.disconnected { break; }
 
-            if driver.window_size_dirty() {
-                let (w, h) = driver.window_size();
+            driver.if_window_size_dirty( |w,h|{
                 if let Some(ctx) = self.ctx.as_mut() {
                     ctx.gfx.on_resize(w, h)?;
                     ctx.camera.viewport_size = Vec2::new(w as f32, h as f32);
                 }
-                driver.clear_window_size_dirty();
-            }
+                Ok(())
+            })?;
 
             let dt = self.timer.pre_frame_and_get_delta_time() as f64;
             let dt32 = dt as f32;

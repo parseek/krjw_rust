@@ -3,6 +3,7 @@
 //! 事件驱动——从主线程接收 winit 消息，
 //! 更新输入状态和窗口状态，为 App 线程提供访问器。
 
+use anyhow::Result;
 use std::sync::mpsc::Receiver;
 
 use super::keyboard_input::KeyboardInput;
@@ -130,12 +131,13 @@ impl EventDriver {
         self.window_size
     }
 
-    pub fn window_size_dirty(&self) -> bool {
-        self.window_size_dirty
-    }
-
-    pub fn clear_window_size_dirty(&mut self) {
-        self.window_size_dirty = false;
+    pub fn if_window_size_dirty<F>(&mut self, mut then: F) -> Result<()>
+    where F: FnMut(u32, u32) -> Result<()> {
+        if self.window_size_dirty {
+            then(self.window_size.0, self.window_size.1)?;
+            self.window_size_dirty = false;
+        }
+        Ok(())
     }
 
     // ── Frame lifecycle ──

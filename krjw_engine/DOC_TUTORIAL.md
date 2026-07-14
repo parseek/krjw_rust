@@ -116,11 +116,7 @@ edition = "2024"
 [dependencies]
 krjw_engine = { path = "../krjw_engine" }
 anyhow = "1.0"
-winit = "0.30.13"
 glam = "0.29"
-kira = "0.12.1"
-cosmic-text = "0.19.0"
-image = "0.25.10"
 ```
 
 ### 2.3 最小入口 `my_app/src/main.rs`
@@ -129,10 +125,10 @@ image = "0.25.10"
 mod app;
 
 use krjw_engine::EngineHandler;
-use winit::event_loop::ControlFlow;
+use krjw_engine::winit::event_loop::{ControlFlow, EventLoop};
 
 fn main() {
-    let event_loop = winit::event_loop::EventLoop::new().unwrap();
+    let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut handler = EngineHandler::new(|window, hwnd, rx| {
@@ -177,10 +173,8 @@ impl Default for App {
 impl App {
     pub fn run(&mut self, window: winit::window::Window, hwnd: isize,
                rx: Receiver<AppMsg>) -> Result<()> {
-        use windows::Win32::Foundation::HWND;
-
         // 1. D3D11 初始化
-        let gfx = D3D11::init_on_hwnd(HWND(hwnd as *mut _))?;
+        let gfx = D3D11::init_on_hwnd(hwnd)?;
         let size = window.inner_size();
 
         // 2. 事件驱动

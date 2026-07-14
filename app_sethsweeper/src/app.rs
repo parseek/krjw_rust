@@ -184,15 +184,12 @@ impl App {
                 break;
             }
 
-            if driver.window_size_dirty() {
+            driver.if_window_size_dirty( |w, h| {
                 if let Some(ctx) = self.ctx.as_mut() {
-                    let (w, h) = driver.window_size();
-                    ctx.gfx
-                        .on_resize(w, h)
-                        .unwrap_or_else(|e| panic!("gfx::resize: {:#}", e));
+                    ctx.gfx.on_resize(w, h)?;
                 }
-                driver.clear_window_size_dirty();
-            }
+                Ok(())
+            })?;
 
             let dt = self.delta_time();
             self.handle_camera_input(dt, driver);
