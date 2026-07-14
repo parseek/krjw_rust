@@ -48,7 +48,7 @@ macro_rules! key_state {
 /// Spacing between grid lines in world units.
 const GRID_SPACING: f32 = 100.0;
 /// Grid line colour (RGBA).
-const GRID_COLOR: [f32; 4] = [0.15, 0.15, 0.15, 1.0];
+const GRID_COLOR: [f32; 4] = [0.25, 0.25, 0.25, 1.0];
 
 /// Engine resources created after window initialisation.
 /// 窗口初始化后创建的引擎资源。

@@ -91,8 +91,8 @@ impl SkylinePacker {
         }
 
         let new_seg = Segment {
-            x: x + w,
-            y,
+            x,
+            y: y + h,
             width: w,
         };
         self.insert_segment(idx, new_seg);
@@ -309,6 +309,7 @@ struct GlyphLocation {
     left: i32, // bearing-x for sprite positioning
     top: i32,  // bearing-y (positive = up from baseline)
     birth_tick: u64,
+    content: SwashContent,
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -326,6 +327,17 @@ pub struct TextLayout {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// PendingGlyph — temporary storage between Phase 2-a and Phase 2-b
+// ─────────────────────────────────────────────────────────────────────
+
+struct PendingGlyph {
+    cache_key: cosmic_text::CacheKey,
+    image: SwashImage,
+    w: u32,
+    h: u32,
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // AtlasText
 // ─────────────────────────────────────────────────────────────────────
 
@@ -337,6 +349,7 @@ pub struct AtlasText {
     pub lifetime_a: f32,
     pub lifetime_b: f32,
     tick: u64,
+    pending_glyphs: Vec<PendingGlyph>,
 }
 
 impl AtlasText {
@@ -352,6 +365,7 @@ impl AtlasText {
             lifetime_a,
             lifetime_b,
             tick: 0,
+            pending_glyphs: Vec::new(),
         })
     }
 
@@ -438,7 +452,7 @@ impl AtlasText {
             for run in buf.layout_runs() {
                 for glyph in run.glyphs.iter() {
                     let physical = glyph.physical((0.0, 0.0), 1.0);
-                    let base_pos = Vec2::new(glyph.x, run.line_y);
+                    let base_pos = Vec2::new(physical.x as f32, run.line_y.floor());
                     info.push((physical.cache_key, base_pos));
                 }
             }
@@ -446,9 +460,10 @@ impl AtlasText {
         };
         // buf dropped
 
-        // Phase 2: rasterize any new glyphs and pack into atlas
+        // Phase 2: rasterize any new glyphs, pack into atlas, update birth_tick for cached
         for (cache_key, _) in &glyphs {
-            if self.glyph_cache.contains_key(cache_key) {
+            if let Some(loc) = self.glyph_cache.get_mut(cache_key) {
+                loc.birth_tick = self.tick;
                 continue;
             }
             let Some(image) = self.rasterize_glyph(*cache_key) else {
@@ -462,6 +477,10 @@ impl AtlasText {
 
             let loc = self
                 .allocate_in_existing_pages(pw, ph, &image.data, image.content)
+                .or_else(|| {
+                    self.compact(device).ok()?;
+                    self.allocate_in_existing_pages(pw, ph, &image.data, image.content)
+                })
                 .or_else(|| {
                     self.add_new_page(device).ok()?;
                     self.allocate_in_existing_pages(pw, ph, &image.data, image.content)
@@ -565,7 +584,6 @@ impl AtlasText {
     }
 
     pub fn upload(&mut self, gfx: &D3D11) -> Result<()> {
-        self.evict_expired();
         for page in &mut self.pages {
             if page.dirty {
                 page.upload_to_gpu(gfx)?;
@@ -600,10 +618,86 @@ impl AtlasText {
                     left: 0,
                     top: 0,
                     birth_tick: self.tick,
+                    content,
                 });
             }
         }
         None
+    }
+
+    fn compact(&mut self, device: &ID3D11Device) -> Result<()> {
+        // 1. Remove expired glyphs
+        self.evict_expired();
+
+        if self.glyph_cache.is_empty() {
+            self.clear(device)?;
+            return Ok(());
+        }
+
+        // 2. Extract RGBA pixel data for each surviving glyph from current pages
+        struct GlyphData {
+            key: cosmic_text::CacheKey,
+            w: u32,
+            h: u32,
+            pixels: Vec<u8>,
+            left: i32,
+            top: i32,
+        }
+
+        let mut all_data: Vec<GlyphData> = Vec::with_capacity(self.glyph_cache.len());
+        let page_w = PAGE_SIZE as usize;
+
+        for (key, loc) in &self.glyph_cache {
+            let page = &self.pages[loc.page_idx];
+            let mut data = Vec::with_capacity((loc.w * loc.h * 4) as usize);
+            for row in 0..loc.h {
+                for col in 0..loc.w {
+                    let idx = ((loc.atlas_y + row) as usize) * page_w + (loc.atlas_x + col) as usize;
+                    data.extend_from_slice(&page.pixels[idx]);
+                }
+            }
+            all_data.push(GlyphData {
+                key: *key,
+                w: loc.w,
+                h: loc.h,
+                pixels: data,
+                left: loc.left,
+                top: loc.top,
+            });
+        }
+
+        // 3. Rebuild from a single fresh page
+        self.pages.clear();
+        self.pages.push(TextPage::new(device)?);
+        self.glyph_cache.clear();
+
+        // 4. Re-allocate all survivors (extracted data is always RGBA → Color)
+        for gd in &all_data {
+            let loc = self
+                .allocate_in_existing_pages(gd.w, gd.h, &gd.pixels, SwashContent::Color)
+                .or_else(|| {
+                    self.add_new_page(device).ok()?;
+                    self.allocate_in_existing_pages(gd.w, gd.h, &gd.pixels, SwashContent::Color)
+                });
+            if let Some(loc) = loc {
+                self.glyph_cache.insert(
+                    gd.key,
+                    GlyphLocation {
+                        page_idx: loc.page_idx,
+                        atlas_x: loc.atlas_x,
+                        atlas_y: loc.atlas_y,
+                        w: gd.w,
+                        h: gd.h,
+                        left: gd.left,
+                        top: gd.top,
+                        birth_tick: self.tick,
+                        content: SwashContent::Color,
+                    },
+                );
+            }
+        }
+
+        Ok(())
     }
 
     fn add_new_page(&mut self, device: &ID3D11Device) -> Result<()> {

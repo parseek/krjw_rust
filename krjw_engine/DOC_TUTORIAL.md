@@ -1482,7 +1482,7 @@ impl AtlasText {
 
 寿命公式：`lifetime = max(side * lifetime_a + lifetime_b, 1)`（帧数）
 - `side` = 字形的最大边长
-- `lifetime_a`：基于大小的系数（大字形活更久）
+- `lifetime_a`：基于大小的系数（大字形活更短）
 - `lifetime_b`：固定寿命偏移
 
 #### Example
