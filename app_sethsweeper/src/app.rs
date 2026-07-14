@@ -10,7 +10,9 @@ use std::sync::mpsc::Receiver;
 
 use anyhow::{Result, Context};
 use glam::Vec2;
-use winit::keyboard::KeyCode;
+use krjw_engine::winit::{keyboard::KeyCode, window};
+use krjw_engine::image;
+use krjw_engine::cosmic_text;
 
 use kira::{AudioManager, DefaultBackend, sound::static_sound::StaticSoundData};
 
@@ -51,7 +53,7 @@ const GRID_COLOR: [f32; 4] = [0.15, 0.15, 0.15, 1.0];
 /// Engine resources created after window initialisation.
 /// 窗口初始化后创建的引擎资源。
 pub struct AppContext {
-    pub window: winit::window::Window,
+    pub window: window::Window,
     pub gfx: D3D11,
     pub audio_mgr: AudioManager,
     pub batch: SpriteBatch2D,
@@ -115,7 +117,7 @@ impl App {
     /// Initialises everything and runs the frame loop.
     pub fn run(
         &mut self,
-        window: winit::window::Window,
+        window: window::Window,
         hwnd: isize,
         rx: Receiver<AppMsg>,
     ) -> Result<()> {

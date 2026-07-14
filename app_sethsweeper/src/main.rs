@@ -6,13 +6,13 @@
 mod app;
 
 use krjw_engine::EngineHandler;
-use winit::event_loop::ControlFlow;
+use krjw_engine::winit::event_loop::{EventLoop, ControlFlow};
 
 fn main() {
     println!("RS260701 by KrisuRJW");
 
     // Create a winit event loop that polls continuously.
-    let event_loop = winit::event_loop::EventLoop::new()
+    let event_loop = EventLoop::new()
         .unwrap_or_else(|e| panic!("Failed to create event loop: {}", e));
     event_loop.set_control_flow(ControlFlow::Poll);
 

@@ -113,12 +113,9 @@ name = "app_sethsweeper"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cosmic-text",
  "glam 0.29.3",
- "image",
  "kira",
  "krjw_engine",
- "winit",
 ]
 
 [[package]]
@@ -128,7 +125,6 @@ dependencies = [
  "anyhow",
  "glam 0.29.3",
  "krjw_engine",
- "winit",
 ]
 
 [[package]]

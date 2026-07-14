@@ -1,10 +1,10 @@
 mod app;
 
 use krjw_engine::EngineHandler;
-use winit::event_loop::ControlFlow;
+use krjw_engine::winit::event_loop::{EventLoop, ControlFlow};
 
 fn main() {
-    let event_loop = winit::event_loop::EventLoop::new().unwrap();
+    let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut handler = EngineHandler::new(|window, hwnd, rx| {

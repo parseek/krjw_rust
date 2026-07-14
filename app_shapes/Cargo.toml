@@ -6,5 +6,4 @@ edition = "2024"
 [dependencies]
 krjw_engine = { path = "../krjw_engine" }
 anyhow = "1.0.103"
-winit = "0.30.13"
 glam = "0.29"

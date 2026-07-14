@@ -7,7 +7,6 @@ use std::sync::mpsc::Receiver;
 
 use anyhow::{Result, Context};
 use glam::Vec2;
-use winit::keyboard::KeyCode;
 
 use krjw_engine::{
     self, AppMsg, Timer,
@@ -16,6 +15,8 @@ use krjw_engine::{
     graphic::d3d11::D3D11,
     graphic::d3d11::shape_batch_2d::ShapeBatch2D,
     graphic::d3d11::sprite_batch_2d::SpriteBatch2D,
+    winit::keyboard::KeyCode,
+    winit::window::Window,
 };
 
 /// Number of bouncing balls.
@@ -35,7 +36,7 @@ pub struct Ball {
 /// Engine resources created after window initialisation.
 #[allow(dead_code)]
 pub struct AppContext {
-    pub window: winit::window::Window,
+    pub window: Window,
     pub gfx: D3D11,
     pub batch: SpriteBatch2D,
     pub shape_batch: ShapeBatch2D,
@@ -78,7 +79,7 @@ impl App {
         }
     }
 
-    pub fn run(&mut self, window: winit::window::Window, hwnd: isize, rx: Receiver<AppMsg>) -> Result<()> {
+    pub fn run(&mut self, window: Window, hwnd: isize, rx: Receiver<AppMsg>) -> Result<()> {
         let gfx = D3D11::init_on_hwnd(hwnd)
             .unwrap_or_else(|e| panic!("gfx::init: {:#}", e));
         let size = window.inner_size();
