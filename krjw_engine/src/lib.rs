@@ -57,6 +57,11 @@ pub mod platform {
     }
 }
 
+pub use image;
+pub use winit;
+pub use swash;
+pub use cosmic_text;
+
 
 // ── TextureInfoArced (originally from app.rs) ──────────────
 
