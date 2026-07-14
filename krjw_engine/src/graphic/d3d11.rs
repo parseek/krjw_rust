@@ -95,7 +95,8 @@ impl D3D11 {
 }
 
 impl D3D11 {
-    pub fn init_on_hwnd(hwnd: HWND) -> Result<Self> {
+    pub fn init_on_hwnd(hwnd: isize) -> Result<Self> {
+        let hwnd = HWND(hwnd as *mut _);
         let swap_chain_desc = DXGI_SWAP_CHAIN_DESC {
             BufferDesc: DXGI_MODE_DESC {
                 Width: 0,
@@ -275,7 +276,7 @@ impl D3D11 {
 
     pub fn init_on_window(window: &Window) -> Result<Self> {
         let hwnd = get_hwnd(window);
-        Self::init_on_hwnd(hwnd)
+        Self::init_on_hwnd(hwnd.0 as isize)
     }
 
     pub fn reset_rtv(

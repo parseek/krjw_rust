@@ -121,19 +121,7 @@ glam = "0.29"
 kira = "0.12.1"
 cosmic-text = "0.19.0"
 image = "0.25.10"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.62.2", features = [
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_Direct3D",
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_Graphics_Direct3D_Fxc",
-] }
 ```
-
-⚠️ **Warning**：依赖中包含大量 WinAPI 特性和 `windows` crate，是引擎的半成品状态的体现。未来可能通过 feature flags 简化。
 
 ### 2.3 最小入口 `my_app/src/main.rs`
 
@@ -644,7 +632,7 @@ pub struct D3D11 {
 ```rust
 impl D3D11 {
     // 初始化
-    pub fn init_on_hwnd(hwnd: HWND) -> Result<Self>;
+    pub fn init_on_hwnd(hwnd: isize) -> Result<Self>; // isize 对应 winit 库对 HWND 的定义
     pub fn init_on_window(window: &Window) -> Result<Self>;
 
     // 渲染控制
@@ -1656,10 +1644,8 @@ impl Default for App {
 impl App {
     pub fn run(&mut self, window: winit::window::Window, hwnd: isize,
                rx: Receiver<AppMsg>) -> Result<()> {
-        use windows::Win32::Foundation::HWND;
-
         // ── D3D11 初始化 ──
-        let gfx = D3D11::init_on_hwnd(HWND(hwnd as *mut _))?;
+        let gfx = D3D11::init_on_hwnd(hwnd)?;
         let size = window.inner_size();
         let window_size = Vec2::new(size.width as f32, size.height as f32);
 

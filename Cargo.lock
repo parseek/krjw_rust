@@ -118,7 +118,6 @@ dependencies = [
  "image",
  "kira",
  "krjw_engine",
- "windows",
  "winit",
 ]
 
@@ -129,7 +128,6 @@ dependencies = [
  "anyhow",
  "glam 0.29.3",
  "krjw_engine",
- "windows",
  "winit",
 ]
 

@@ -119,8 +119,7 @@ impl App {
         hwnd: isize,
         rx: Receiver<AppMsg>,
     ) -> Result<()> {
-        use windows::Win32::Foundation::HWND;
-        let gfx = D3D11::init_on_hwnd(HWND(hwnd as *mut _))
+        let gfx = D3D11::init_on_hwnd(hwnd)
             .unwrap_or_else(|e| panic!("gfx::init: {:#}", e));
 
         let size = window.inner_size();

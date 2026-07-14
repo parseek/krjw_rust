@@ -44,6 +44,20 @@ pub use graphic::d3d11::d3d11_utils::TextureInfo;
 pub use graphic::d3d11::sprite_batch_2d::{SpriteBatch2D, self};
 pub use graphic::d3d11::shape_batch_2d::ShapeBatch2D;
 
+// Platform Re-exports
+
+pub mod platform {
+    #[cfg(windows)]
+    pub use windows;
+    #[cfg(windows)]
+    pub mod direct3d11 {
+        pub use windows::Win32::Graphics::Direct3D::*;
+        pub use windows::Win32::Graphics::Direct3D11::*;
+        pub use windows::Win32::Graphics::Dxgi::Common::*;
+    }
+}
+
+
 // ── TextureInfoArced (originally from app.rs) ──────────────
 
 use std::sync::Arc;
