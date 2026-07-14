@@ -5,6 +5,7 @@ pub const KEY_STATE_MASK_PRESSED: u8 = 0b0001;
 pub const KEY_STATE_MASK_EDGE: u8 = 0b0010;
 pub const KEY_STATE_MASK_TRUE_EDGE: u8 = 0b0110;
 pub const KEY_STATE_MASK_TRUE_EDGE_BIT: u8 = 0b0100;
+pub const KEY_STATE_MASK_SUDDEN_UP_BIT: u8 = 0b1000;
 
 #[allow(unused)]
 pub const KEY_STATE_RELEASED: KeyState = KeyState(0);
@@ -82,7 +83,14 @@ impl KeyState {
     pub fn is_down_true_edge(&self) -> bool {
         self.is_true_edge() && self.is_pressed()
     }
+    #[allow(unused)]
+    pub fn is_sudden_up(&self) -> bool {
+        (self.0 & KEY_STATE_MASK_SUDDEN_UP_BIT) != 0
+    }
     pub fn off_edge(&self) -> KeyState {
         KeyState(self.0 & !(KEY_STATE_MASK_EDGE | KEY_STATE_MASK_TRUE_EDGE))
+    }
+    pub fn sudden_up(&self) -> KeyState {
+        KeyState(self.0 | KEY_STATE_MASK_SUDDEN_UP_BIT)
     }
 }

@@ -22,6 +22,10 @@ impl KeyboardInput {
         for key_state in self.key_map.values_mut() {
             // turn off the edge bit, but keep the pressed bit.
             *key_state = key_state.off_edge();
+            if key_state.is_sudden_up()
+            {
+                *key_state = KEY_STATE_UP_TRUE_EDGE
+            }
         }
     }
     /// Handle an AppMsg directly, bypassing winit event synthesis.
@@ -42,7 +46,12 @@ impl KeyboardInput {
                     if key_state.is_released() {
                         KEY_STATE_UP_EDGE
                     } else {
-                        KEY_STATE_UP_TRUE_EDGE
+                        if key_state.is_down_true_edge() {
+                            key_state.sudden_up()
+                        }
+                        else {
+                            KEY_STATE_UP_TRUE_EDGE
+                        }
                     }
                 }
             };
