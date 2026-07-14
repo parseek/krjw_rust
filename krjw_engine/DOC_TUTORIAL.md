@@ -529,8 +529,8 @@ impl MouseInput {
     pub fn get_mouse_pos_vec2(&self) -> Vec2;          // 便捷返回 glam::Vec2
     pub fn get_mouse_delta(&self) -> (f64, f64);        // 原生鼠标移动增量
     pub fn get_mouse_button_state(&self, button: MouseButton) -> KeyState;
-    pub fn get_mouse_wheel_delta(&self) -> (f64, f64);  // 滚轮行增量
-    pub fn get_pixel_wheel(&self) -> Option<(f64, f64)>; // 滚轮像素增量
+    pub fn get_mouse_wheel_delta(&self) -> (f64, f64);  // 滚轮行在一帧内的增量
+    pub fn get_pixel_wheel(&self) -> Option<(f64, f64)>; // 滚轮像素在一帧内增量（触控板等），如果不可用则返回 None，否则返回 Some((f64, f64))，分别代表 x、y 方向的像素增量
     pub fn is_in_window(&self) -> bool;
     pub fn get_mouse_button_states_iter(&self) -> impl Iterator<Item = (MouseButton, KeyState)> + '_;
     pub fn end_frame(&mut self);   // 清除边缘位和滚轮增量
@@ -1061,6 +1061,8 @@ impl ShapeBatch2D {
     pub fn add_circle(&mut self, pos, radius, uv_tl_px, uv_size_px, color, segments);
 
     // 通用
+    pub fn push(&mut self, vertices: &[ShapeVertex], tri_indicies: &[[u16; 3]])；
+    pub fn push_with_transform_2d(&mut self, vertices: &[ShapeVertex], tri_indicies: &[[u16; 3]], pos: Vec2, scale: Vec2, rot: f32)；
     pub fn set_texture(&mut self, srv, width, height);
     pub fn set_mvp(&self, gfx: &D3D11, mvp: &glam::Mat4);
     pub fn submit_and_draw(&mut self, gfx: &D3D11) -> Result<()>;
@@ -1772,9 +1774,14 @@ impl App {
         }
 
         // 鼠标滚轮缩放
-        let (_, wheel_y) = driver.mouse().get_mouse_wheel_delta();
-        ctx.camera.zoom *= 1.0 - (wheel_y as f32) * 0.1;
-        ctx.camera.zoom = ctx.camera.zoom.max(Vec2::splat(0.1)).min(Vec2::splat(10.0));
+        if let Some((_, wheel_y)) = driver.mouse().get_pixel_wheel() {
+            ctx.camera.zoom *= 1.0 - (wheel_y as f32) * 0.001;
+            ctx.camera.zoom = ctx.camera.zoom.max(Vec2::splat(0.1)).min(Vec2::splat(10.0));
+        } else {
+            let (_, wheel_y) = driver.mouse().get_mouse_wheel_delta();
+            ctx.camera.zoom *= 1.0 - (wheel_y as f32) * 0.1;
+            ctx.camera.zoom = ctx.camera.zoom.max(Vec2::splat(0.1)).min(Vec2::splat(10.0));
+        }
 
         Ok(())
     }
@@ -1864,7 +1871,8 @@ impl App {
         ctx.batch.push_buffered(&ctx.gfx, &vp, &mut ctx.sprite_buf, |t| (t.pos, t.scale, t.rot));
         // 上传图集纹理
         ctx.atlas.upload(&ctx.gfx)?;
-        ctx.batch.push_buffered(&ctx.gfx, &vp, &mut ctx.text_buf, |t| (t.pos, t.scale, t.rot));
+        // 渲染精灵
+        ctx.batch.submit_and_draw(&ctx.gfx);
 
         // 形状使用 ShapeBatch2D
         ctx.shape_batch.draw(&ctx.gfx, &vp)?;

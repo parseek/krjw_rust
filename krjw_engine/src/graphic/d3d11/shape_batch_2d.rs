@@ -12,7 +12,7 @@ use super::state_objects::StateObjects;
 #[allow(unused)]
 #[derive(Copy, Clone)]
 #[repr(C)]
-struct ShapeVertex {
+pub struct ShapeVertex {
     pos: [f32; 2],
     uv: [f32; 2],
     color: [f32; 4],
@@ -46,7 +46,7 @@ pub struct ShapeBatch2D {
     capacity: usize,
 
     vertices: Vec<ShapeVertex>,
-    indices: Vec<[u16; 3]>,
+    indices: Vec<[u32; 3]>,
 }
 
 #[allow(unused)]
@@ -62,6 +62,7 @@ impl ShapeBatch2D {
         ps: &ID3D11PixelShader,
         input_layout: &ID3D11InputLayout,
     ) -> Result<Self> {
+        assert!(capacity < (0xffffffff / 3 + 1));
         let vb_stride = std::mem::size_of::<ShapeVertex>() as u32;
         let vertex_buffer = d3d11_utils::create_dynamic_buffer(
             device,
@@ -71,7 +72,7 @@ impl ShapeBatch2D {
 
         let index_buffer = d3d11_utils::create_dynamic_buffer(
             device,
-            (std::mem::size_of::<u16>() * 3 * capacity) as u32,
+            (std::mem::size_of::<u32>() * 3 * capacity) as u32,
             D3D11_BIND_INDEX_BUFFER.0 as u32,
         )?;
 
@@ -112,11 +113,11 @@ impl ShapeBatch2D {
     // ── No-UV methods (ignore texture, work with ps_solid) ──────
 
     pub fn add_rect_no_uv(&mut self, pos: Vec2, size: Vec2, rot: f32, color: [f32; 4]) {
-        let (cos, sin) = rot.sin_cos();
+        let (sin, cos) = rot.sin_cos();
         let hw = size.x * 0.5;
         let hh = size.y * 0.5;
         let local: [[f32; 2]; 4] = [[-hw, -hh], [hw, -hh], [-hw, hh], [hw, hh]];
-        let base = self.vertices.len() as u16;
+        let base = self.vertices.len() as u32;
 
         for &[lx, ly] in &local {
             let fx = (lx * cos - ly * sin) + pos.x;
@@ -133,7 +134,7 @@ impl ShapeBatch2D {
 
     pub fn add_circle_no_uv(&mut self, pos: Vec2, radius: f32, color: [f32; 4], segments: u32) {
         let segments = segments.max(3);
-        let base = self.vertices.len() as u16;
+        let base = self.vertices.len() as u32;
 
         self.vertices.push(ShapeVertex {
             pos: [pos.x, pos.y],
@@ -152,8 +153,8 @@ impl ShapeBatch2D {
         for i in 0..segments {
             self.indices.push([
                 base,
-                base + 1 + i as u16,
-                base + 1 + ((i + 1) % segments) as u16,
+                base + 1 + i as u32,
+                base + 1 + ((i + 1) % segments) as u32,
             ]);
         }
     }
@@ -166,7 +167,7 @@ impl ShapeBatch2D {
         }
         let ndir = dir / len;
         let perp = Vec2::new(-ndir.y, ndir.x) * (thickness * 0.5);
-        let base = self.vertices.len() as u16;
+        let base = self.vertices.len() as u32;
 
         for p in [from + perp, from - perp, to + perp, to - perp] {
             self.vertices.push(ShapeVertex {
@@ -184,7 +185,7 @@ impl ShapeBatch2D {
         if n < 3 {
             return;
         }
-        let base = self.vertices.len() as u16;
+        let base = self.vertices.len() as u32;
         for &p in points {
             self.vertices.push(ShapeVertex {
                 pos: [p.x, p.y],
@@ -192,7 +193,7 @@ impl ShapeBatch2D {
                 color,
             });
         }
-        for i in 1..(n as u16 - 1) {
+        for i in 1..(n as u32 - 1) {
             self.indices.push([base, base + i, base + i + 1]);
         }
     }
@@ -215,7 +216,7 @@ impl ShapeBatch2D {
                 (uv_size_px.x, uv_size_px.y)
             }
         };
-        let (cos, sin) = rot.sin_cos();
+        let (sin, cos) = rot.sin_cos();
         let hw = size.x * 0.5;
         let hh = size.y * 0.5;
         let local: [[f32; 2]; 4] = [[-hw, -hh], [hw, -hh], [-hw, hh], [hw, hh]];
@@ -224,7 +225,7 @@ impl ShapeBatch2D {
         let u1 = (uv_tl_px.x + uv_size_px.x) / tw;
         let v1 = (uv_tl_px.y + uv_size_px.y) / th;
         let uvs = [[u0, v0], [u1, v0], [u0, v1], [u1, v1]];
-        let base = self.vertices.len() as u16;
+        let base = self.vertices.len() as u32;
 
         for i in 0..4 {
             let (lx, ly) = (local[i][0], local[i][1]);
@@ -254,7 +255,7 @@ impl ShapeBatch2D {
             None => (uv_size_px.x, uv_size_px.y),
         };
         let segments = segments.max(3);
-        let base = self.vertices.len() as u16;
+        let base = self.vertices.len() as u32;
         let u0 = uv_tl_px.x / tw;
         let v0 = uv_tl_px.y / th;
         let u1 = (uv_tl_px.x + uv_size_px.x) / tw;
@@ -281,13 +282,46 @@ impl ShapeBatch2D {
         for i in 0..segments {
             self.indices.push([
                 base,
-                base + 1 + i as u16,
-                base + 1 + ((i + 1) % segments) as u16,
+                base + 1 + i as u32,
+                base + 1 + ((i + 1) % segments) as u32,
             ]);
         }
     }
 
     // ── Common methods ─────────────────────────────────────────
+
+    pub fn push(&mut self, vertices: &[ShapeVertex], tri_indicies: &[[u32; 3]]) {
+        let len = vertices.len();
+        let s_i = self.vertices.len();
+        assert!(s_i < 0x10000);
+        let s_i = s_i as u32;
+        self.vertices.extend_from_slice(vertices);
+        for i in tri_indicies {
+            self.indices.push(i.map(|x| x + s_i));
+        }
+    }
+
+    pub fn push_with_transform_2d(&mut self, vertices: &[ShapeVertex], tri_indicies: &[[u32; 3]], pos: Vec2, scale: Vec2, rot: f32) {
+        let len = vertices.len();
+        let s_i = self.vertices.len();
+        assert!(s_i < 0x10000);
+        let s_i = s_i as u32;
+        let mut tr_vert = Vec::with_capacity(vertices.len());
+        let (sin, cos) = rot.sin_cos();
+        for i in vertices {
+            let p = Vec2::from_slice(&i.pos) * scale;
+            let p = Vec2::new(sin, cos).rotate(p);
+            let p = p * scale;
+            tr_vert.push(ShapeVertex {
+                pos: [p.x, p.y],
+                ..*i
+            });
+        }
+        self.vertices.extend_from_slice(vertices);
+        for i in tri_indicies {
+            self.indices.push(i.map(|x| x + s_i));
+        }
+    }
 
     pub fn set_mvp(&self, gfx: &D3D11, mvp: &glam::Mat4) {
         write_buffer(&gfx.imm_context, &self.cb_world, &[CbWorld { mvp: *mvp }])
@@ -321,7 +355,7 @@ impl ShapeBatch2D {
                 Some([stride].as_ptr()),
                 Some([offset].as_ptr()),
             );
-            context.IASetIndexBuffer(&self.index_buffer, DXGI_FORMAT_R16_UINT, 0);
+            context.IASetIndexBuffer(&self.index_buffer, DXGI_FORMAT_R32_UINT, 0);
 
             context.VSSetConstantBuffers(0, Some(&[Some(self.cb_world.clone())]));
             context.VSSetShader(&self.vertex_shader, None);
@@ -342,14 +376,14 @@ impl ShapeBatch2D {
             let chunk_tris = &self.indices[tri_start..tri_end];
 
             let mut local_verts: Vec<ShapeVertex> = Vec::with_capacity(3 * self.capacity);
-            let mut remap: Vec<Option<u16>> = vec![None; self.vertices.len()];
-            let mut local_indices: Vec<[u16; 3]> = Vec::with_capacity(chunk_tris.len());
+            let mut remap: Vec<Option<u32>> = vec![None; self.vertices.len()];
+            let mut local_indices: Vec<[u32; 3]> = Vec::with_capacity(chunk_tris.len());
 
             for tri in chunk_tris {
-                let mut local_tri = [0u16; 3];
+                let mut local_tri = [0u32; 3];
                 for (j, &vi) in tri.iter().enumerate() {
                     if remap[vi as usize].is_none() {
-                        remap[vi as usize] = Some(local_verts.len() as u16);
+                        remap[vi as usize] = Some(local_verts.len() as u32);
                         local_verts.push(self.vertices[vi as usize]);
                     }
                     local_tri[j] = remap[vi as usize].unwrap();
