@@ -6,6 +6,7 @@ use std::thread::{self, JoinHandle};
 
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, WindowEvent};
+use winit::window::WindowAttributes;
 
 use crate::msg::AppMsg;
 use crate::mouse_input::MouseButton;
@@ -25,19 +26,21 @@ pub struct EngineHandler {
     /// Closure to initialise and run the application on a dedicated thread.
     /// 在专用线程上初始化和运行应用的闭包。
     app_init: Option<Box<dyn FnOnce(winit::window::Window, isize, mpsc::Receiver<AppMsg>) -> anyhow::Result<()> + Send>>,
+    init_window_attrib: WindowAttributes,
 }
 
 impl EngineHandler {
     /// Create a new `EngineHandler` with the given application initialiser.
     /// 用给定的应用初始化器创建 `EngineHandler`。
     pub fn new(
-        app_init: impl FnOnce(winit::window::Window, isize, mpsc::Receiver<AppMsg>) -> anyhow::Result<()> + Send + 'static,
+        init_window_attrib: WindowAttributes, app_init: impl FnOnce(winit::window::Window, isize, mpsc::Receiver<AppMsg>) -> anyhow::Result<()> + Send + 'static,
     ) -> Self {
         Self {
             msg_queue: None,
             app_thread: None,
             exit_requested: false,
             app_init: Some(Box::new(app_init)),
+            init_window_attrib
         }
     }
 }
@@ -47,19 +50,11 @@ impl ApplicationHandler for EngineHandler {
         println!("[EngineHandler] resumed — creating window & spawning App thread");
 
         // 1. Create the window + extract HWND on the main thread
-        use winit::dpi::LogicalSize;
         use winit::raw_window_handle::HasWindowHandle;
-        use winit::window::WindowAttributes;
 
         let window = event_loop
             .create_window(
-                WindowAttributes::default()
-                    .with_title("KrisuRJW")
-                    .with_inner_size(winit::dpi::Size::Logical(LogicalSize {
-                        width: 960.0,
-                        height: 600.0,
-                    }))
-                    .with_transparent(true),
+                self.init_window_attrib.clone()
             )
             .expect("window::create failed");
 

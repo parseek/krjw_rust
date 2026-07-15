@@ -1,0 +1,11 @@
+[package]
+name = "app_fish"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+krjw_engine = { path = "../krjw_engine" }
+anyhow = "1.0"
+glam = "0.29"
+fastrand = "2.0"
+kira = "0.12.1"

@@ -195,11 +195,10 @@ impl App {
             if events.close_requested || events.disconnected { break; }
 
             // 窗口大小变化
-            if driver.window_size_dirty() {
-                let (w, h) = driver.window_size();
+            driver.if_window_size_dirty( |w, h| {
                 gfx.on_resize(w, h)?;
-                driver.clear_window_size_dirty();
-            }
+                Ok(())
+            })?;
 
             // 你的帧逻辑
             // self.update()?;

@@ -439,7 +439,6 @@ impl AtlasText {
         text: &str,
         metrics: Metrics,
         attrs: Attrs,
-        shaping: Shaping,
         device: &ID3D11Device,
     ) -> Result<TextLayout> {
         // Phase 1: layout
@@ -447,7 +446,7 @@ impl AtlasText {
             let mut buf = Buffer::new(&mut self.font_system, metrics);
             let mut buf = buf.borrow_with(&mut self.font_system);
             buf.set_size(Some(f32::MAX), Some(f32::MAX));
-            buf.set_text(text, &attrs, shaping, None);
+            buf.set_text(text, &attrs, Shaping::Advanced, None);
             let mut info = Vec::new();
             for run in buf.layout_runs() {
                 for glyph in run.glyphs.iter() {
@@ -526,17 +525,13 @@ impl AtlasText {
 
                 let obj = Sprite2DObject {
                     spr: Sprite2D {
-                        origin_px: Vec2::ZERO,
+                        origin_px: Vec2::new(-sprite_x, -sprite_y),
                         size_px: Vec2::new(loc.w as f32, loc.h as f32),
                         uv_tl_px: Vec2::new(loc.atlas_x as f32, loc.atlas_y as f32),
                         uv_size_px: Vec2::new(loc.w as f32, loc.h as f32),
                     },
                     color,
-                    transform: Transform2D {
-                        pos: Vec2::new(sprite_x, sprite_y),
-                        scale: transform.scale,
-                        rot: transform.rot,
-                    },
+                    transform,
                     pipeline,
                     layer,
                 };
@@ -571,15 +566,33 @@ impl AtlasText {
         text: &str,
         metrics: Metrics,
         attrs: Attrs,
-        shaping: Shaping,
         offset: Vec2,
         color: [f32; 4],
         layer: f64,
         buffer: &mut Sprite2DBuffer<TextureInfoArced, Transform2D>,
         device: &ID3D11Device,
     ) -> Result<()> {
-        let layout = self.layout_text(text, metrics, attrs, shaping, device)?;
+        let layout = self.layout_text(text, metrics, attrs, device)?;
         self.render_layout_simple(&layout, offset, color, layer, buffer);
+        Ok(())
+    }
+
+    /// One-shot convenience: layout + render in a single call.
+    pub fn render_text_transform(
+        &mut self,
+        text: &str,
+        metrics: Metrics,
+        attrs: Attrs,
+        origin: Vec2,
+        transform: Transform2D,
+        offset: Vec2,
+        color: [f32; 4],
+        layer: f64,
+        buffer: &mut Sprite2DBuffer<TextureInfoArced, Transform2D>,
+        device: &ID3D11Device,
+    ) -> Result<()> {
+        let layout = self.layout_text(text, metrics, attrs, device)?;
+        self.render_layout(&layout, offset, origin, transform, color, layer, buffer);
         Ok(())
     }
 

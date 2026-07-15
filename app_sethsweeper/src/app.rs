@@ -53,6 +53,7 @@ const GRID_COLOR: [f32; 4] = [0.25, 0.25, 0.25, 1.0];
 /// Engine resources created after window initialisation.
 /// 窗口初始化后创建的引擎资源。
 pub struct AppContext {
+    #[allow(unused)]
     pub window: window::Window,
     pub gfx: D3D11,
     pub audio_mgr: AudioManager,
@@ -195,7 +196,6 @@ impl App {
             self.handle_camera_input(dt, driver);
             self.handle_sound_effects(driver);
             self.update_tiles(dt, driver);
-            self.update_window_title(dt);
             self.render_frame(dt, driver)?;
 
             let ctx = self.ctx.as_mut().unwrap();
@@ -475,19 +475,6 @@ impl App {
         }
     }
 
-    /// Update window title with FPS and delta time.
-    fn update_window_title(&mut self, dt: f64) {
-        let ctx = self.ctx.as_mut().unwrap();
-        ctx.window.set_title(
-            format!(
-                "KrisuRJW - FPS: {:.2} dTime: {:.05}",
-                self.timer.get_fps(),
-                dt
-            )
-            .as_str(),
-        );
-    }
-
     /// Render demo sprites (background logo with shadow + push_buffered).
     fn render_demo_sprites(&mut self) -> Result<()> {
         let ctx = self.ctx.as_mut().unwrap();
@@ -676,7 +663,7 @@ impl App {
                 .OMSetDepthStencilState(&gfx.states.depth_none, 0);
         }
 
-        use cosmic_text::{Attrs, Family, Metrics, Shaping};
+        use cosmic_text::{Attrs, Family, Metrics};
 
         let (w, h) = driver.window_size();
         let w = w as f32;
@@ -697,7 +684,6 @@ impl App {
             &text_to_display,
             Metrics::new(24.0, 32.0),
             Attrs::new().family(Family::Name(&self.font_name)),
-            Shaping::Advanced,
             &gfx.device,
         )?;
 
