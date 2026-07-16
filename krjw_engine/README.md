@@ -448,7 +448,8 @@ pub fn overlaps(&self, other: &ColliderInstance) -> Overlap;
 
 ```rust
 pub fn new(device, lifetime_a: f32, lifetime_b: f32) -> Result<Self>;
-pub fn layout_text(&mut self, text, metrics, attrs, shaping, device) -> Result<TextLayout>;
+pub fn layout_text(&mut self, text, metrics, attrs, device) -> Result<TextLayout>;
+/// 返回的 TextLayout 包含 `content_size: Vec2`，可用于精确定位。
 pub fn render_layout(&self, layout, offset, origin, transform, color, layer, buffer);
 pub fn render_layout_simple(&self, layout, offset, color, layer, buffer);
 pub fn upload(&mut self, gfx: &D3D11) -> Result<()>;

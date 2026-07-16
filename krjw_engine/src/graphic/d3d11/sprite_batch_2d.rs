@@ -255,24 +255,26 @@ impl SpriteBatch2D {
         self.vertices.len()
     }
 
-    /// Push a `Sprite2DBuffer` into the batch with automatic pipeline switching.
-    /// 将 `Sprite2DBuffer` 压入 batch，自动处理 pipeline 切换。
+    /// Push sprites from a `Sprite2DBuffer` into the internal batch with automatic pipeline switching.
+    /// 将 `Sprite2DBuffer` 中的精灵压入内部 batch，自动处理 pipeline 切换。
     ///
+    /// - **Call `set_mvp` before using this** / **使用前请先调用 `set_mvp`**
     /// - Clears the batch before starting / 开始前清空 batch
     /// - Calls `pipeline.apply_to_batch()` to set up each new pipeline / 每次切换 pipeline 时调用
     /// - Calls `extract_transform` to extract `(pos, scale, rot)` from the sprite's transform / 用 `extract_transform` 提取变换数据
-    /// - Calls `submit_and_draw` at the end / 最后提交绘制
+    ///
+    /// ⚠ **Does NOT submit/draw** — call `draw_buffer_and_clear` or `submit_and_draw` afterward.
+    /// ⚠ 一次 DrawCall 只能接受一个 MVP 矩阵，mvp 需通过 `set_mvp` 在外部设置。
+    /// ⚠ **不提交绘制** — 之后需要调用 `draw_buffer_and_clear` 或 `submit_and_draw`。
     pub fn push_buffered<T, U>(
         &mut self,
         gfx: &D3D11,
-        vp: &glam::Mat4,
         buf: &mut Sprite2DBuffer<T, U>,
         extract_transform: impl Fn(&U) -> (Vec2, Vec2, f32),
     ) where
         T: Pipeline,
         U: Clone,
     {
-        self.set_mvp(gfx, vp);
         self.clear_batch();
 
         buf.for_each_sorted(
@@ -287,7 +289,24 @@ impl SpriteBatch2D {
                 batch.add(pos, scale, rot, &spr.spr, spr.color).ok();
             },
         );
+    }
 
+    /// Push buffer, submit to GPU, then clear both batch and buffer.
+    /// Convenience wrapper around `push_buffered` + `submit_and_draw` + both clears.
+    /// **Call `set_mvp` before using this** / **使用前请先调用 `set_mvp`**
+    /// 便捷方法：压入批量精灵 → 提交 → 清空 batch 和 buffer。
+    pub fn draw_buffer_and_clear<T, U>(
+        &mut self,
+        gfx: &D3D11,
+        buf: &mut Sprite2DBuffer<T, U>,
+        extract_transform: impl Fn(&U) -> (Vec2, Vec2, f32),
+    ) where
+        T: Pipeline,
+        U: Clone,
+    {
+        self.push_buffered(gfx, buf, extract_transform);
         self.submit_and_draw(gfx).ok();
+        self.clear_batch();
+        buf.clear();
     }
 }

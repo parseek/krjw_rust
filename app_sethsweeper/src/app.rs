@@ -540,7 +540,8 @@ impl App {
             push_sprite(&obj);
         }
 
-        batch.push_buffered(gfx, &vp_transposed, buf, |xform| {
+        batch.set_mvp(gfx, &vp_transposed);
+        batch.draw_buffer_and_clear(gfx, buf, |xform| {
             (xform.pos, xform.scale, xform.rot)
         });
         Ok(())
@@ -602,7 +603,8 @@ impl App {
             });
         }
 
-        batch.push_buffered(gfx, &vp_transposed, buf, |xform| {
+        batch.set_mvp(gfx, &vp_transposed);
+        batch.draw_buffer_and_clear(gfx, buf, |xform| {
             (xform.pos, xform.scale, xform.rot)
         });
         Ok(())
@@ -709,7 +711,8 @@ impl App {
         ctx.atlas_text.upload(gfx)?;
 
         let batch = &mut ctx.batch;
-        batch.push_buffered(gfx, &hud_vp, &mut ctx.sprite_buf, |xform| {
+        batch.set_mvp(gfx, &hud_vp);
+        batch.draw_buffer_and_clear(gfx, &mut ctx.sprite_buf, |xform| {
             (xform.pos, xform.scale, xform.rot)
         });
 

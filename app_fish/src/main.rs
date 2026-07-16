@@ -1,7 +1,10 @@
+#![windows_subsystem = "windows"]
+
 mod app;
 
 use anyhow::{Context, Result};
 use krjw_engine::{EngineHandler, winit::{self, dpi::LogicalSize, event_loop::{ControlFlow, EventLoop}, window::WindowAttributes}};
+
 
 fn main() -> Result<()> {
     let ev_loop = EventLoop::new().context("EventLoop::new() failed")?;

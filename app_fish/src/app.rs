@@ -432,8 +432,6 @@ fn render_hud(ctx: &mut AppContext) -> Result<()> {
 
 /// 游戏结束画面
 fn render_game_over(ctx: &mut AppContext) -> Result<()> {
-    let half_w = ctx.camera.viewport_size.x * 0.5;
-    let half_h = ctx.camera.viewport_size.y * 0.5;
     let size_v = Vec2::new(ctx.camera.viewport_size.x, ctx.camera.viewport_size.y);
     ctx.shape_batch.add_rect_no_uv(Vec2::new(0.0, 0.0), size_v*2.0, size_v, 0.0, [0.0, 0.0, 0.0, 0.5]);
 
@@ -442,12 +440,12 @@ fn render_game_over(ctx: &mut AppContext) -> Result<()> {
     let win_metrics = Metrics::new(40.0, 40.0);
     let win_layout = ctx.atlas_text.layout_text(&final_text, win_metrics, Attrs::new(), &ctx.gfx.device).unwrap();
     let win_origin = win_layout.content_size * 0.5;
-    ctx.atlas_text.render_layout(&win_layout, Vec2::new(0.0, 0.0), win_origin, Transform2D::IDENTITY, [1.0, 1.0, 0.0, 1.0], 2.0, &mut ctx.sprite_buf);
+    ctx.atlas_text.render_layout(&win_layout, Vec2::new(0.0, 0.0), win_origin, Transform2D::IDENTITY, [1.0; 4], 2.0, &mut ctx.sprite_buf);
 
     let hint_metrics = Metrics::new(20.0, 20.0);
     let hint_layout = ctx.atlas_text.layout_text("按 R 或 Enter 重新开始", hint_metrics, Attrs::new(), &ctx.gfx.device).unwrap();
     let hint_origin = hint_layout.content_size * 0.5;
-    ctx.atlas_text.render_layout(&hint_layout, Vec2::new(0.0, -50.0), hint_origin, Transform2D::IDENTITY, [1.0, 1.0, 1.0, 1.0], 2.0, &mut ctx.sprite_buf);
+    ctx.atlas_text.render_layout(&hint_layout, Vec2::new(0.0, -50.0), hint_origin, Transform2D::IDENTITY, [1.0; 4], 2.0, &mut ctx.sprite_buf);
 
     Ok(())
 }
@@ -485,9 +483,8 @@ fn render_frame(ctx: &mut AppContext) -> Result<()> {
     ctx.player2_fish.add_to_buffer(&ctx.gfx, &mut ctx.atlas_text, &mut ctx.sprite_buf);
     ctx.fishes.add_to_buffer(&ctx.gfx, &mut ctx.atlas_text, &mut ctx.sprite_buf);
     
-    ctx.sprite_batch.push_buffered(&ctx.gfx, &mvp, &mut ctx.sprite_buf, |xform| (xform.pos, xform.scale, xform.rot));
-    ctx.sprite_batch.clear_batch();
-    ctx.sprite_buf.clear();
+    ctx.sprite_batch.set_mvp(&ctx.gfx, &mvp);
+    ctx.sprite_batch.draw_buffer_and_clear(&ctx.gfx, &mut ctx.sprite_buf, |xform| (xform.pos, xform.scale, xform.rot));
 
     // HUD
     render_hud(ctx)?;
@@ -521,9 +518,8 @@ fn render_frame(ctx: &mut AppContext) -> Result<()> {
     ctx.shape_batch.clear_batch();
 
     ctx.atlas_text.upload(&ctx.gfx)?;
-    ctx.sprite_batch.push_buffered(&ctx.gfx, &mvp, &mut ctx.sprite_buf, |xform| (xform.pos, xform.scale, xform.rot));
-    ctx.sprite_batch.clear_batch();
-    ctx.sprite_buf.clear();
+    ctx.sprite_batch.set_mvp(&ctx.gfx, &mvp);
+    ctx.sprite_batch.draw_buffer_and_clear(&ctx.gfx, &mut ctx.sprite_buf, |xform| (xform.pos, xform.scale, xform.rot));
 
     ctx.gfx.present()?;
     Ok(())

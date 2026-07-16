@@ -123,10 +123,10 @@ impl ShapeBatch2D {
     pub fn add_rect_no_uv(&mut self, pos: Vec2, size: Vec2, origin_px: Vec2, rot: f32, color: [f32; 4]) {
         let (sin, cos) = rot.sin_cos();
         // centre of the rect in local space
-        let cx = -origin_px.x + size.x * 0.5;
-        let cy = -origin_px.y + size.y * 0.5;
         let hw = size.x * 0.5;
         let hh = size.y * 0.5;
+        let cx = -origin_px.x + hw;
+        let cy = -origin_px.y + hh;
         // vertices relative to centre
         let local: [[f32; 2]; 4] = [[-hw, -hh], [hw, -hh], [-hw, hh], [hw, hh]];
         let base = self.vertices.len() as u32;
@@ -213,10 +213,19 @@ impl ShapeBatch2D {
 
     // ── UV methods (require texture via set_texture) ───────────
 
+    /// Add a textured rectangle.
+    ///
+    /// - `pos` — position of the `origin_px` point (in world space)
+    /// - `size` — rectangle size
+    /// - `origin_px` — offset in pixels from top-left (0,0)=TL, (w/2,h/2)=centre, (w,h)=BR
+    /// - `rot` — rotation (radians) around `pos`
+    /// - `uv_tl_px`, `uv_size_px` — UV rectangle in pixels
+    /// - `color` — RGBA tint
     pub fn add_rect(
         &mut self,
         pos: Vec2,
         size: Vec2,
+        origin_px: Vec2,
         rot: f32,
         uv_tl_px: Vec2,
         uv_size_px: Vec2,
@@ -225,13 +234,14 @@ impl ShapeBatch2D {
         let (tw, th) = match self.texture.as_ref() {
             Some((_, w, h)) => (*w as f32, *h as f32),
             None => {
-                // fallback: no texture, treat UV as normalized
                 (uv_size_px.x, uv_size_px.y)
             }
         };
         let (sin, cos) = rot.sin_cos();
         let hw = size.x * 0.5;
         let hh = size.y * 0.5;
+        let cx = -origin_px.x + hw;
+        let cy = -origin_px.y + hh;
         let local: [[f32; 2]; 4] = [[-hw, -hh], [hw, -hh], [-hw, hh], [hw, hh]];
         let u0 = uv_tl_px.x / tw;
         let v0 = uv_tl_px.y / th;
@@ -242,8 +252,8 @@ impl ShapeBatch2D {
 
         for i in 0..4 {
             let (lx, ly) = (local[i][0], local[i][1]);
-            let fx = (lx * cos - ly * sin) + pos.x;
-            let fy = (lx * sin + ly * cos) + pos.y;
+            let fx = (lx * cos - ly * sin) + pos.x + cx;
+            let fy = (lx * sin + ly * cos) + pos.y + cy;
             self.vertices.push(ShapeVertex {
                 pos: [fx, fy],
                 uv: uvs[i],
