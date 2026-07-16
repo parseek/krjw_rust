@@ -319,7 +319,7 @@ struct GlyphLocation {
 /// Stores the result of text layout: a list of (CacheKey, base_position) pairs.
 /// Can be reused to render the same text multiple times with different
 /// transforms, colours, or layers (e.g. for drop-shadow).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TextLayout {
     /// List of glyph instances: (cache_key, base_position).
     /// base_position is (glyph.x, run.line_y) relative to the original origin.
