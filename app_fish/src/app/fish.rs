@@ -59,8 +59,8 @@ impl FishSpecies {
 
     pub fn size_range(&self) -> (f32, f32) {
         match self {
-            Self::Normal    => (16.0, 40.0),
-            Self::Tropical  => (8.0, 32.0),
+            Self::Normal    => (6.0, 40.0),
+            Self::Tropical  => (5.0, 32.0),
             Self::Puffer    => (24.0, 48.0),
             Self::Octopus   => (50.0, 72.0),
             Self::Whale     => (60.0, 120.0),

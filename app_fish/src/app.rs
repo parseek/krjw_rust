@@ -4,9 +4,12 @@ use kira::sound::static_sound::StaticSoundData;
 use krjw_engine::{cosmic_text::{Attrs, Metrics}, winit::keyboard::KeyCode, *};
 use std::{collections::HashMap, io::Cursor, sync::mpsc::Receiver};
 
+use crate::app::items::Item;
+
 mod grid_render;
 mod fish;
 mod fishes;
+mod items;
 
 mod helper_window;
 
@@ -105,6 +108,8 @@ pub struct AppContext {
     pub intro_played: bool,
 
     pub helper_window: helper_window::HelperWindow,
+
+    pub items: items::Items,
 }
 
 impl AppContext {
@@ -121,17 +126,6 @@ impl AppContext {
         player.spawn_fade = Self::PLAYER_SPAWN_FADE;
         player.spawn_fade_duration = Self::PLAYER_SPAWN_FADE;
     }
-
-    /// 开局生成几条基础鱼
-    // fn spawn_starter_fish(&mut self) {
-    //     let view_w = self.camera.viewport_size.x;
-    //     let view_h = self.camera.viewport_size.y;
-    //     self.fishes = fishes::Fishes::new(view_w, view_h);
-    //     for _ in 0..4 {
-    //         self.fishes.spawn_one_of_species(fish::FishSpecies::Normal, &mut self.atlas_text, &self.gfx);
-    //         self.fishes.spawn_one_of_species(fish::FishSpecies::Tropical, &mut self.atlas_text, &self.gfx);
-    //     }
-    // }
 
     fn reset_state(&mut self) {
         self.p1_lives = 5;
@@ -160,7 +154,19 @@ impl AppContext {
         Self::reset_player(&mut self.player1_fish);
         Self::reset_player(&mut self.player2_fish);
         self.reset_state();
-        // self.spawn_starter_fish();
+
+        // 重置物品系统
+        self.items = items::Items::default();
+        self.items.init_layouts(&mut self.atlas_text, &self.gfx);
+        self.items.auto_spawn_enabled = true;
+        
+        // 初始生成几个物品
+        let view_w = self.camera.viewport_size.x;
+        let view_h = self.camera.viewport_size.y;
+        for _ in 0..3 {
+            let item = items::Item::random();
+            self.items.new_item(item, view_w, view_h);
+        }
     }
 
     /// 🎉 在 pos 生成吃鱼粒子效果（被吃的鱼越大，粒子越大越多）
@@ -199,6 +205,64 @@ impl AppContext {
             popup.pos.y += 30.0 * dt;
         }
         self.score_popups.retain(|p| p.lifetime > 0.0);
+    }
+
+    /// 处理单个玩家与所有物品的碰撞
+    /// - `player_idx`: 0 表示 P1，1 表示 P2
+    fn handle_player_item_collision(&mut self, player_idx: usize) {
+        let (player_fish, other_fish, lives) = if player_idx == 0 {
+            (
+                &mut self.player1_fish,
+                &mut self.player2_fish,
+                &mut self.p1_lives,
+            )
+        } else {
+            (
+                &mut self.player2_fish,
+                &mut self.player1_fish,
+                &mut self.p2_lives,
+            )
+        };
+
+        if *lives <= 0 {
+            return;
+        }
+
+        let audio_mgr = &mut self.audio;
+        let sounds = &self.sounds;
+        let snd_item = sounds.get("snd_item").unwrap();
+
+        let player_radius = player_fish.size * 0.6;
+        self.items.foreach_overlap(
+            player_fish.pos,
+            player_radius,
+            |_pos, _alpha, _mov, _size, item_type, already_touched| {
+                if already_touched {
+                    return true; // 已标记，不重复触发
+                }
+                match item_type {
+                    items::Item::SizeToLife => {
+                        // 尺寸减少，生命增加
+                        player_fish.size = (player_fish.size * 0.8).max(6.0);
+                        *lives = (*lives + 1).min(self.max_lives);
+                        // 可选播放音效
+                        unsafe { audio_mgr.play(snd_item.clone()).unwrap_unchecked() };
+                        true // 标记触碰，物品将被移除
+                    }
+                    items::Item::SizeSwap => {
+                        // 交换两个玩家的大小
+                        let temp = player_fish.size;
+                        player_fish.size = other_fish.size;
+                        other_fish.size = temp;
+                        // 上下限约束
+                        player_fish.size = player_fish.size.clamp(4.0, player_fish.max_size);
+                        other_fish.size = other_fish.size.clamp(4.0, other_fish.max_size);
+                        unsafe { audio_mgr.play(snd_item.clone()).unwrap_unchecked() };
+                        true
+                    }
+                }
+            },
+        );
     }
 }
 
@@ -314,7 +378,15 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
         }
     }
 
-    // 无敌 + 减速
+    // ── 物品系统更新 ──
+    ctx.items.set_progress(ctx.fishes.progress_size);
+    ctx.items.update_foreach(dt, view_w, view_h);
+
+    // ── 玩家与物品碰撞（复用函数） ──
+    ctx.handle_player_item_collision(0); // P1
+    ctx.handle_player_item_collision(1); // P2
+
+    // ── 无敌 + 减速 ──
     if ctx.p1_invincible > 0.0 {
         ctx.p1_invincible -= dt_f;
         ctx.player1_fish.set_invincible_flash(ctx.p1_invincible);
@@ -482,11 +554,14 @@ fn render_frame(ctx: &mut AppContext, dt: f64) -> Result<()> {
     ctx.shape_batch.submit_and_draw(&ctx.gfx)?;
     ctx.shape_batch.clear_batch();
 
-    // 玩家 + 鱼群
+    // 玩家 + 鱼群 + 物品
     ctx.player1_fish.add_to_buffer(&ctx.gfx, &mut ctx.atlas_text, &mut ctx.sprite_buf);
     ctx.player2_fish.add_to_buffer(&ctx.gfx, &mut ctx.atlas_text, &mut ctx.sprite_buf);
     ctx.fishes.add_to_buffer(&ctx.gfx, &mut ctx.atlas_text, &mut ctx.sprite_buf);
+    ctx.items.draw_all(&mut ctx.atlas_text, &mut ctx.sprite_buf);
     
+    // 注意：先 upload 再 draw_buffer_and_clear
+    ctx.atlas_text.upload(&ctx.gfx)?;
     ctx.sprite_batch.set_mvp(&ctx.gfx, &mvp);
     ctx.sprite_batch.draw_buffer_and_clear(&ctx.gfx, &mut ctx.sprite_buf, |xform| (xform.pos, xform.scale, xform.rot));
 
@@ -521,6 +596,7 @@ fn render_frame(ctx: &mut AppContext, dt: f64) -> Result<()> {
     ctx.shape_batch.submit_and_draw(&ctx.gfx)?;
     ctx.shape_batch.clear_batch();
 
+    // 文字精灵可能已经在 render_hud 中添加到 sprite_buf，需要再次提交
     ctx.atlas_text.upload(&ctx.gfx)?;
     ctx.sprite_batch.set_mvp(&ctx.gfx, &mvp);
     ctx.sprite_batch.draw_buffer_and_clear(&ctx.gfx, &mut ctx.sprite_buf, |xform| (xform.pos, xform.scale, xform.rot));
@@ -541,6 +617,7 @@ impl App {
         insert_snd!("snd_hurt", "snd_hurt.wav");
         insert_snd!("snd_chomp", "snd_chomp.wav");
         insert_snd!("snd_fail", "snd_badexplosion.wav");
+        insert_snd!("snd_item", "snd_kikkyspace.wav");
         Ok((kira::AudioManager::new(Default::default()).context("AudioManager::new failed")?, sounds))
     }
 
@@ -565,8 +642,15 @@ impl App {
         let _ = atlas_text.layout_text("🐠", Metrics::new(512.0, 512.0), Attrs::new(), &gfx.device)?;
         let _ = atlas_text.layout_text("🐟", Metrics::new(512.0, 512.0), Attrs::new(), &gfx.device)?;
 
+        // 预加载物品 Emoji
+        for item in items::Item::ALL {
+            let emoji = item.emoji();
+            let render_size = item.max_render_size() * 2.0;
+            let _ = atlas_text.layout_text(emoji, Metrics::new(render_size, render_size), Attrs::new(), &gfx.device)?;
+        }
+
         // 预加载 HUD 常用字符
-        let _ = atlas_text.layout_text("❤️💀P120分按R或Enter重新开始双方阵亡胜利", Metrics::new(48.0, 48.0), Attrs::new(), &gfx.device)?;
+        let _ = atlas_text.layout_text("❤️💀P120分按R或Enter重新开始双方阵亡胜利🧾🩸", Metrics::new(48.0, 48.0), Attrs::new(), &gfx.device)?;
         let _ = atlas_text.layout_text("❤️💀P120分", Metrics::new(24.0, 24.0), Attrs::new(), &gfx.device)?;
 
         Ok(())
@@ -597,14 +681,15 @@ impl App {
         let player2_fish = fish::Fish::new(AppContext::PLAYER_START_SIZE, 256.0, "🐟", &mut atlas_text, &gfx);
 
         let fishes = fishes::Fishes::new();
-        // for _ in 0..4 {
-        //     fishes.spawn_one_of_species(fish::FishSpecies::Normal, &mut atlas_text, &gfx);
-        //     fishes.spawn_one_of_species(fish::FishSpecies::Tropical, &mut atlas_text, &gfx);
-        // }
 
         let (audio, sounds) = self.init_audio()?;
 
         let helper_window = helper_window::HelperWindow::new(&mut atlas_text, &gfx)?;
+
+        let mut items = items::Items::default();
+        items.init_layouts(&mut atlas_text, &gfx);
+        // 可选：设置自动生成
+        items.auto_spawn_enabled = true;
 
         let mut ctx = AppContext {
             window, driver, gfx, sprite_batch, shape_batch, camera, timer, sprite_buf, atlas_text,
@@ -622,6 +707,7 @@ impl App {
             reset_hold_duration: 5.0,
             intro_played: false,
             helper_window,
+            items
         };
         ctx.restart();
         self.ctx = Some(ctx);
