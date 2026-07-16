@@ -323,7 +323,7 @@ struct GlyphLocation {
 pub struct TextLayout {
     /// List of glyph instances: (cache_key, base_position).
     /// base_position is (glyph.x, run.line_y) relative to the original origin.
-    pub(crate) glyphs: Vec<(cosmic_text::CacheKey, Vec2)>,
+    pub glyphs: Vec<(cosmic_text::CacheKey, Vec2)>,
     pub content_size: Vec2,
 }
 

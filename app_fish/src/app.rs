@@ -8,6 +8,8 @@ mod grid_render;
 mod fish;
 mod fishes;
 
+mod helper_window;
+
 /// 🎉 粒子 —— 吃鱼时的视觉效果
 pub struct Particle {
     pos: Vec2,
@@ -101,6 +103,8 @@ pub struct AppContext {
     pub reset_hold_duration: f32,
     /// 是否已播放开场音效
     pub intro_played: bool,
+
+    pub helper_window: helper_window::HelperWindow,
 }
 
 impl AppContext {
@@ -450,7 +454,7 @@ fn render_game_over(ctx: &mut AppContext) -> Result<()> {
     Ok(())
 }
 
-fn render_frame(ctx: &mut AppContext) -> Result<()> {
+fn render_frame(ctx: &mut AppContext, dt: f64) -> Result<()> {
     ctx.gfx.clear_screen(&[0.1, 0.2, 0.4, 1.0]);
 
     ctx.camera.apply_viewport(&ctx.gfx);
@@ -520,6 +524,8 @@ fn render_frame(ctx: &mut AppContext) -> Result<()> {
     ctx.atlas_text.upload(&ctx.gfx)?;
     ctx.sprite_batch.set_mvp(&ctx.gfx, &mvp);
     ctx.sprite_batch.draw_buffer_and_clear(&ctx.gfx, &mut ctx.sprite_buf, |xform| (xform.pos, xform.scale, xform.rot));
+
+    ctx.helper_window.render(dt as f32, ctx.camera.viewport_size, &mut ctx.atlas_text, &mut ctx.sprite_buf, &mut ctx.sprite_batch, &mut ctx.shape_batch, &ctx.gfx);
 
     ctx.gfx.present()?;
     Ok(())
@@ -598,6 +604,8 @@ impl App {
 
         let (audio, sounds) = self.init_audio()?;
 
+        let helper_window = helper_window::HelperWindow::new(&mut atlas_text, &gfx)?;
+
         let mut ctx = AppContext {
             window, driver, gfx, sprite_batch, shape_batch, camera, timer, sprite_buf, atlas_text,
             time_elapsed: 0.0, audio, sounds,
@@ -613,6 +621,7 @@ impl App {
             reset_hold_timer: 0.0,
             reset_hold_duration: 5.0,
             intro_played: false,
+            helper_window,
         };
         ctx.restart();
         self.ctx = Some(ctx);
@@ -654,7 +663,7 @@ impl App {
 
             process_event(ctx, dt)?;
 
-            if size.0 > 0 && size.1 > 0 { render_frame(ctx)?; }
+            if size.0 > 0 && size.1 > 0 { render_frame(ctx, dt)?; }
             ctx.driver.end_frame();
             ctx.timer.post_frame_fpsc(dt);
             ctx.time_elapsed += dt;
