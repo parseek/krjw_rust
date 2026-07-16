@@ -324,6 +324,7 @@ pub struct TextLayout {
     /// List of glyph instances: (cache_key, base_position).
     /// base_position is (glyph.x, run.line_y) relative to the original origin.
     pub(crate) glyphs: Vec<(cosmic_text::CacheKey, Vec2)>,
+    pub content_size: Vec2,
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -442,20 +443,27 @@ impl AtlasText {
         device: &ID3D11Device,
     ) -> Result<TextLayout> {
         // Phase 1: layout
-        let glyphs: Vec<(cosmic_text::CacheKey, Vec2)> = {
+        let (glyphs, content_size) = {
             let mut buf = Buffer::new(&mut self.font_system, metrics);
             let mut buf = buf.borrow_with(&mut self.font_system);
-            buf.set_size(Some(f32::MAX), Some(f32::MAX));
+            // buf.set_size(Some(f32::MAX), Some(f32::MAX));
+            buf.set_size(None, None);
             buf.set_text(text, &attrs, Shaping::Advanced, None);
             let mut info = Vec::new();
+            let mut content_size = Vec2::ZERO;
+            let mut num_lines = 0_usize;
             for run in buf.layout_runs() {
+                content_size.x = content_size.x.max(run.line_w);
                 for glyph in run.glyphs.iter() {
                     let physical = glyph.physical((0.0, 0.0), 1.0);
                     let base_pos = Vec2::new(physical.x as f32, run.line_y.floor());
                     info.push((physical.cache_key, base_pos));
                 }
+                num_lines+=1;
             }
-            info
+            content_size.y = metrics.line_height * num_lines as f32;
+            content_size = content_size.ceil().max(Vec2::ONE);
+            (info, content_size)
         };
         // buf dropped
 
@@ -491,7 +499,7 @@ impl AtlasText {
             }
         }
 
-        Ok(TextLayout { glyphs })
+        Ok(TextLayout { glyphs, content_size })
     }
 
     /// Render a previously laid-out `TextLayout` into the sprite buffer.

@@ -112,16 +112,29 @@ impl ShapeBatch2D {
 
     // ── No-UV methods (ignore texture, work with ps_solid) ──────
 
-    pub fn add_rect_no_uv(&mut self, pos: Vec2, size: Vec2, rot: f32, color: [f32; 4]) {
+    /// Add a rectangle.
+    ///
+    /// - `pos` — position of the `origin_px` point (in world space)
+    /// - `size` — rectangle size
+    /// - `origin_px` — offset in pixels relative to the rectangle's top-left corner.
+    ///   `(0,0)` = top-left, `(w/2, h/2)` = centre, `(w, h)` = bottom-right.
+    /// - `rot` — rotation (radians) around `pos`
+    /// - `color` — RGBA
+    pub fn add_rect_no_uv(&mut self, pos: Vec2, size: Vec2, origin_px: Vec2, rot: f32, color: [f32; 4]) {
         let (sin, cos) = rot.sin_cos();
+        // centre of the rect in local space
+        let cx = -origin_px.x + size.x * 0.5;
+        let cy = -origin_px.y + size.y * 0.5;
         let hw = size.x * 0.5;
         let hh = size.y * 0.5;
+        // vertices relative to centre
         let local: [[f32; 2]; 4] = [[-hw, -hh], [hw, -hh], [-hw, hh], [hw, hh]];
         let base = self.vertices.len() as u32;
 
         for &[lx, ly] in &local {
-            let fx = (lx * cos - ly * sin) + pos.x;
-            let fy = (lx * sin + ly * cos) + pos.y;
+            // translate to world: centre → world then rotate around pos
+            let fx = (lx * cos - ly * sin) + pos.x + cx;
+            let fy = (lx * sin + ly * cos) + pos.y + cy;
             self.vertices.push(ShapeVertex {
                 pos: [fx, fy],
                 uv: [0.0; 2],

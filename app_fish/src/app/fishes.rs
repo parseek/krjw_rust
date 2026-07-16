@@ -21,10 +21,10 @@ pub struct EatResult {
 }
 
 impl Fishes {
-    pub fn new(view_w: f32, view_h: f32) -> Self {
+    pub fn new() -> Self {
         Self {
             fish_list: Vec::new(),
-            view_w, view_h,
+            view_w: 0.0, view_h: 0.0,
             progress_size: 0.0,
             spawn_acc: HashMap::new(),
         }

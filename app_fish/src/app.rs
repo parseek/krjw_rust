@@ -119,15 +119,15 @@ impl AppContext {
     }
 
     /// 开局生成几条基础鱼
-    fn spawn_starter_fish(&mut self) {
-        let view_w = self.camera.viewport_size.x;
-        let view_h = self.camera.viewport_size.y;
-        self.fishes = fishes::Fishes::new(view_w, view_h);
-        for _ in 0..4 {
-            self.fishes.spawn_one_of_species(fish::FishSpecies::Normal, &mut self.atlas_text, &self.gfx);
-            self.fishes.spawn_one_of_species(fish::FishSpecies::Tropical, &mut self.atlas_text, &self.gfx);
-        }
-    }
+    // fn spawn_starter_fish(&mut self) {
+    //     let view_w = self.camera.viewport_size.x;
+    //     let view_h = self.camera.viewport_size.y;
+    //     self.fishes = fishes::Fishes::new(view_w, view_h);
+    //     for _ in 0..4 {
+    //         self.fishes.spawn_one_of_species(fish::FishSpecies::Normal, &mut self.atlas_text, &self.gfx);
+    //         self.fishes.spawn_one_of_species(fish::FishSpecies::Tropical, &mut self.atlas_text, &self.gfx);
+    //     }
+    // }
 
     fn reset_state(&mut self) {
         self.p1_lives = 5;
@@ -147,6 +147,7 @@ impl AppContext {
         self.p2_score = 0;
         self.particles.clear();
         self.score_popups.clear();
+        self.fishes = fishes::Fishes::new();
         self.reset_hold_timer = 0.0;
         self.intro_played = false;
     }
@@ -155,7 +156,7 @@ impl AppContext {
         Self::reset_player(&mut self.player1_fish);
         Self::reset_player(&mut self.player2_fish);
         self.reset_state();
-        self.spawn_starter_fish();
+        // self.spawn_starter_fish();
     }
 
     /// 🎉 在 pos 生成吃鱼粒子效果（被吃的鱼越大，粒子越大越多）
@@ -255,8 +256,8 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
 
     fish_proc_move(&mut ctx.player1_fish, &mut ctx.player2_fish, &ctx.driver, dt_f * p1_mult.min(p2_mult));
 
-    // 更新进度 = max(两个玩家 size)
-    ctx.fishes.progress_size = ctx.player1_fish.size.max(ctx.player2_fish.size);
+    // 更新进度 = sum(两个玩家 size)
+    ctx.fishes.progress_size = (ctx.player1_fish.size + ctx.player2_fish.size).max(ctx.fishes.progress_size);
 
     let size = ctx.window.inner_size();
     ctx.fishes.set_view_size(size.width as f32, size.height as f32);
@@ -354,7 +355,7 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
     Ok(())
 }
 
-/// HUD
+/// HUD — 使用 TextLayout::content_size + add_rect_no_uv origin_px 对齐
 fn render_hud(ctx: &mut AppContext) -> Result<()> {
     let half_w = ctx.camera.viewport_size.x * 0.5;
     let half_h = ctx.camera.viewport_size.y * 0.5;
@@ -382,37 +383,49 @@ fn render_hud(ctx: &mut AppContext) -> Result<()> {
     let p1_s_layout = ctx.atlas_text.layout_text(&p1_score_text, small_metrics, attrs.clone(), &ctx.gfx.device).unwrap();
     let p2_s_layout = ctx.atlas_text.layout_text(&p2_score_text, small_metrics, attrs, &ctx.gfx.device).unwrap();
 
-    let margin = 10.0;
-    let y_offset = 8.0;
-    let line1_y = half_h - margin - 24.0 - y_offset;
-    let line2_y = line1_y - 24.0 - 4.0; // 第二行在生命值下面
+    let margin = 24.0;
+    let y_offset = 24.0;
 
-    let p1_pos = Vec2::new(-half_w + margin, line1_y);
-    let p1_score_pos = Vec2::new(-half_w + margin, line2_y);
+    // 所有 UI 元素从左上角对齐，用 content_size 定位
+    let line1_y = half_h - margin - y_offset;
+    let line2_y = line1_y - 24.0 - 4.0;
 
-    let bg_padding = 4.0;
-    let p1_bg_w = 20.0 + p1_display.len() as f32 * 16.0;
-    let p2_bg_w = 20.0 + p2_display.len() as f32 * 16.0;
-    let bg_h = 28.0;
-    let bg_h2 = 24.0;
+    // P1 行1: 左边界 pos = (-half_w+margin, line1_y), origin = (0,0) 即左上
+    let p1_left = -half_w + margin;
+    let p1_pos = Vec2::new(p1_left, line1_y);
+    // P2 行1: 右边界 pos = (half_w-margin, line1_y), origin = (content_size.x, 0) 即右上
+    let p2_right = half_w - margin;
+    let p2_pos = Vec2::new(p2_right, line1_y);
 
-    // P1 背景
-    ctx.shape_batch.add_rect_no_uv(p1_pos + Vec2::new(-bg_padding, -bg_padding), Vec2::new(p1_bg_w + bg_padding * 2.0, bg_h + bg_padding * 2.0), 0.0, [0.0, 0.0, 0.0, 0.6]);
-    // P2 背景
-    let p2_bg_x = half_w - margin - p2_bg_w - bg_padding;
-    ctx.shape_batch.add_rect_no_uv(Vec2::new(p2_bg_x, p1_pos.y - bg_padding), Vec2::new(p2_bg_w + bg_padding * 2.0, bg_h + bg_padding * 2.0), 0.0, [0.0, 0.0, 0.0, 0.6]);
-    // 分数背景
-    let p1_sbg_w = p1_score_text.len() as f32 * 12.0 + 10.0;
-    let p2_sbg_w = p2_score_text.len() as f32 * 12.0 + 10.0;
-    ctx.shape_batch.add_rect_no_uv(p1_score_pos + Vec2::new(-bg_padding, -bg_padding), Vec2::new(p1_sbg_w + bg_padding * 2.0, bg_h2 + bg_padding * 2.0), 0.0, [0.0, 0.0, 0.0, 0.6]);
-    let p2_sbg_x = half_w - margin - p2_sbg_w - bg_padding;
-    ctx.shape_batch.add_rect_no_uv(Vec2::new(p2_sbg_x, p1_score_pos.y - bg_padding), Vec2::new(p2_sbg_w + bg_padding * 2.0, bg_h2 + bg_padding * 2.0), 0.0, [0.0, 0.0, 0.0, 0.6]);
+    // P1 行2
+    let p1_score_pos = Vec2::new(p1_left, line2_y);
+    // P2 行2
+    let p2_score_pos = Vec2::new(p2_right, line2_y);
+
+    let bg_padding = 5.0;
+    let bg_h = p1_layout.content_size.y + bg_padding * 2.0;
+    let bg_h2 = p1_s_layout.content_size.y + bg_padding * 2.0;
+    let bg_w1 = p1_layout.content_size.x + bg_padding * 2.0;
+    let bg_w2 = p2_layout.content_size.x + bg_padding * 2.0;
+    let bg_w1s = p1_s_layout.content_size.x + bg_padding * 2.0;
+    let bg_w2s = p2_s_layout.content_size.x + bg_padding * 2.0;
+
+    // P1 行1 背景（左上对齐 p1_pos - padding）
+    ctx.shape_batch.add_rect_no_uv(p1_pos + Vec2::new(-bg_padding, -bg_padding), Vec2::new(bg_w1, bg_h), Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.6]);
+    // P2 行1 背景（右上对齐 p2_pos - padding）
+    ctx.shape_batch.add_rect_no_uv(p2_pos + Vec2::new(bg_padding, -bg_padding), Vec2::new(bg_w2, bg_h), Vec2::new(bg_w2, 0.0), 0.0, [0.0, 0.0, 0.0, 0.6]);
+    // P1 行2 背景
+    ctx.shape_batch.add_rect_no_uv(p1_score_pos + Vec2::new(-bg_padding, -bg_padding), Vec2::new(bg_w1s, bg_h2), Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.6]);
+    // P2 行2 背景（右上对齐）
+    ctx.shape_batch.add_rect_no_uv(p2_score_pos + Vec2::new(bg_padding, -bg_padding), Vec2::new(bg_w2s, bg_h2), Vec2::new(bg_w2s, 0.0), 0.0, [0.0, 0.0, 0.0, 0.6]);
 
     let text_color = [1.0, 1.0, 1.0, 1.0];
+    // P1 文字：左上对齐
     ctx.atlas_text.render_layout(&p1_layout, p1_pos, Vec2::ZERO, Transform2D::IDENTITY, text_color, 1.0, &mut ctx.sprite_buf);
-    ctx.atlas_text.render_layout(&p2_layout, Vec2::new(half_w - margin - p2_bg_w, p1_pos.y), Vec2::ZERO, Transform2D::IDENTITY, text_color, 1.0, &mut ctx.sprite_buf);
     ctx.atlas_text.render_layout(&p1_s_layout, p1_score_pos, Vec2::ZERO, Transform2D::IDENTITY, [1.0, 1.0, 0.0, 1.0], 1.0, &mut ctx.sprite_buf);
-    ctx.atlas_text.render_layout(&p2_s_layout, Vec2::new(half_w - margin - p2_sbg_w, p1_score_pos.y), Vec2::ZERO, Transform2D::IDENTITY, [1.0, 1.0, 0.0, 1.0], 1.0, &mut ctx.sprite_buf);
+    // P2 文字：用 content_size 右对齐（右上角对齐）
+    ctx.atlas_text.render_layout(&p2_layout, p2_pos, Vec2::new(p2_layout.content_size.x, 0.0), Transform2D::IDENTITY, text_color, 1.0, &mut ctx.sprite_buf);
+    ctx.atlas_text.render_layout(&p2_s_layout, p2_score_pos, Vec2::new(p2_s_layout.content_size.x, 0.0), Transform2D::IDENTITY, [1.0, 1.0, 0.0, 1.0], 1.0, &mut ctx.sprite_buf);
 
     Ok(())
 }
@@ -421,19 +434,20 @@ fn render_hud(ctx: &mut AppContext) -> Result<()> {
 fn render_game_over(ctx: &mut AppContext) -> Result<()> {
     let half_w = ctx.camera.viewport_size.x * 0.5;
     let half_h = ctx.camera.viewport_size.y * 0.5;
+    let size_v = Vec2::new(ctx.camera.viewport_size.x, ctx.camera.viewport_size.y);
+    ctx.shape_batch.add_rect_no_uv(Vec2::new(0.0, 0.0), size_v*2.0, size_v, 0.0, [0.0, 0.0, 0.0, 0.5]);
 
-    ctx.shape_batch.add_rect_no_uv(Vec2::new(-half_w, -half_h), Vec2::new(ctx.camera.viewport_size.x, ctx.camera.viewport_size.y), 0.0, [0.0, 0.0, 0.0, 0.5]);
-
-    // 最终分数
+    // 最终分数 — 居中显示
     let final_text = format!("{}  |  P1: {}分  P2: {}分", ctx.winner_text, ctx.p1_score, ctx.p2_score);
     let win_metrics = Metrics::new(40.0, 40.0);
     let win_layout = ctx.atlas_text.layout_text(&final_text, win_metrics, Attrs::new(), &ctx.gfx.device).unwrap();
-    let win_pos = Vec2::new(-half_w + 30.0, 0.0);
-    ctx.atlas_text.render_layout(&win_layout, win_pos, Vec2::ZERO, Transform2D::IDENTITY, [1.0, 1.0, 0.0, 1.0], 2.0, &mut ctx.sprite_buf);
+    let win_origin = win_layout.content_size * 0.5;
+    ctx.atlas_text.render_layout(&win_layout, Vec2::new(0.0, 0.0), win_origin, Transform2D::IDENTITY, [1.0, 1.0, 0.0, 1.0], 2.0, &mut ctx.sprite_buf);
 
     let hint_metrics = Metrics::new(20.0, 20.0);
     let hint_layout = ctx.atlas_text.layout_text("按 R 或 Enter 重新开始", hint_metrics, Attrs::new(), &ctx.gfx.device).unwrap();
-    ctx.atlas_text.render_layout(&hint_layout, Vec2::new(-half_w + 30.0, -50.0), Vec2::ZERO, Transform2D::IDENTITY, [1.0, 1.0, 1.0, 1.0], 2.0, &mut ctx.sprite_buf);
+    let hint_origin = hint_layout.content_size * 0.5;
+    ctx.atlas_text.render_layout(&hint_layout, Vec2::new(0.0, -50.0), hint_origin, Transform2D::IDENTITY, [1.0, 1.0, 1.0, 1.0], 2.0, &mut ctx.sprite_buf);
 
     Ok(())
 }
@@ -481,7 +495,7 @@ fn render_frame(ctx: &mut AppContext) -> Result<()> {
     ctx.shape_batch.submit_and_draw(&ctx.gfx)?;
     ctx.shape_batch.clear_batch();
 
-    // 长按 R 进度条（左上角，与 HUD 对齐）
+    // 长按 R 进度条（左上角）
     if ctx.reset_hold_timer > 0.0 {
         let half_w = ctx.camera.viewport_size.x * 0.5;
         let half_h = ctx.camera.viewport_size.y * 0.5;
@@ -490,15 +504,14 @@ fn render_frame(ctx: &mut AppContext) -> Result<()> {
         let bar_h = 16.0;
         let margin = 10.0;
         let y_offset = 8.0;
-        // 放在 HUD 第二行（分数行）的下方，靠左对齐
-        let line3_y = - half_h + margin + 24.0 + y_offset + (24.0 + 4.0) + (24.0 + 4.0);
-        let bar_pos = Vec2::new(-half_w + margin, line3_y);
-        ctx.shape_batch.add_rect_no_uv(bar_pos, Vec2::new(bar_w, bar_h), 0.0, [0.0, 0.0, 0.0, 0.6]);
-        ctx.shape_batch.add_rect_no_uv(bar_pos + Vec2::new(2.0, 2.0), Vec2::new((bar_w - 4.0) * progress, bar_h - 4.0), 0.0, [0.8, 0.2, 0.2, 0.9]);
-        let hint = format!("松开取消重置");
+        // 屏幕左上角（origin_px=ZERO = 左上）
+        let bar_pos = Vec2::new(-half_w + margin, -half_h + y_offset);
+        ctx.shape_batch.add_rect_no_uv(bar_pos, Vec2::new(bar_w, bar_h), Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.6]);
+        ctx.shape_batch.add_rect_no_uv(bar_pos + Vec2::new(2.0, 2.0), Vec2::new((bar_w - 4.0) * progress, bar_h - 4.0), Vec2::ZERO, 0.0, [0.8, 0.2, 0.2, 0.9]);
+        let hint = "松开取消重置".to_string();
         let hint_metrics = Metrics::new(14.0, 14.0);
         let hint_layout = ctx.atlas_text.layout_text(&hint, hint_metrics, Attrs::new(), &ctx.gfx.device).unwrap();
-        ctx.atlas_text.render_layout(&hint_layout, Vec2::new(-half_w + margin + 4.0, line3_y + 1.0), Vec2::ZERO, Transform2D::IDENTITY, [1.0, 1.0, 1.0, 1.0], 2.0, &mut ctx.sprite_buf);
+        ctx.atlas_text.render_layout(&hint_layout, bar_pos + Vec2::new(0.0, bar_h + 2.0), Vec2::ZERO, Transform2D::IDENTITY, [1.0, 1.0, 1.0, 1.0], 2.0, &mut ctx.sprite_buf);
     }
 
     if ctx.game_over { render_game_over(ctx)?; }
@@ -581,15 +594,15 @@ impl App {
         let player1_fish = fish::Fish::new(AppContext::PLAYER_START_SIZE, 256.0, "🐠", &mut atlas_text, &gfx);
         let player2_fish = fish::Fish::new(AppContext::PLAYER_START_SIZE, 256.0, "🐟", &mut atlas_text, &gfx);
 
-        let mut fishes = fishes::Fishes::new(size.width as f32, size.height as f32);
-        for _ in 0..4 {
-            fishes.spawn_one_of_species(fish::FishSpecies::Normal, &mut atlas_text, &gfx);
-            fishes.spawn_one_of_species(fish::FishSpecies::Tropical, &mut atlas_text, &gfx);
-        }
+        let fishes = fishes::Fishes::new();
+        // for _ in 0..4 {
+        //     fishes.spawn_one_of_species(fish::FishSpecies::Normal, &mut atlas_text, &gfx);
+        //     fishes.spawn_one_of_species(fish::FishSpecies::Tropical, &mut atlas_text, &gfx);
+        // }
 
         let (audio, sounds) = self.init_audio()?;
 
-        self.ctx = Some(AppContext {
+        let mut ctx = AppContext {
             window, driver, gfx, sprite_batch, shape_batch, camera, timer, sprite_buf, atlas_text,
             time_elapsed: 0.0, audio, sounds,
             player1_fish, player2_fish, fishes,
@@ -598,13 +611,15 @@ impl App {
             p1_slow_timer: 0.0, p2_slow_timer: 0.0, slow_duration: 1.0,
             shake_timer: 0.0, shake_intensity: 0.0,
             game_over: false, game_over_timer: 0.0, winner_text: String::new(),
-            particles: Vec::new(),
+            particles: Vec::with_capacity(1024),
             p1_score: 0, p2_score: 0,
             score_popups: Vec::new(),
             reset_hold_timer: 0.0,
             reset_hold_duration: 5.0,
             intro_played: false,
-        });
+        };
+        ctx.restart();
+        self.ctx = Some(ctx);
 
         loop {
             let ctx = self.ctx.as_mut().unwrap();
