@@ -399,7 +399,7 @@ impl Fish {
         let disappear_factor = self.disappear_factor();
         let final_alpha = self.alpha * disappear_factor;
         let final_color = [self.color[0], self.color[1], self.color[2], self.color[3] * final_alpha];
-        atlas_text.render_layout(&self.shape_layout, Vec2::ZERO, self.origin, self.get_transform().move_by(Vec2::new(5.0, 5.0)), [0.0, 0.0, 0.0, 0.3 * final_alpha], 0.0, sprite_buffer);
+        atlas_text.render_layout(&self.shape_layout, Vec2::ZERO, self.origin, self.get_transform().with_move_by(Vec2::new(5.0, 5.0)), [0.0, 0.0, 0.0, 0.3 * final_alpha], 0.0, sprite_buffer);
         atlas_text.render_layout(&self.shape_layout, Vec2::ZERO, self.origin, self.get_transform(), final_color, 0.0, sprite_buffer);
     }
 

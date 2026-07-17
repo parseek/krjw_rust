@@ -671,7 +671,7 @@ fn render_debug_help(ctx: &mut AppContext) -> Result<()> {
         layout,
         Vec2::ZERO,
         Vec2::ZERO,
-        Transform2D::IDENTITY.move_by(pos),
+        Transform2D::IDENTITY.with_move_by(pos),
         [1.0, 1.0, 1.0, alpha],
         -1.0,
         &mut ctx.sprite_buf,

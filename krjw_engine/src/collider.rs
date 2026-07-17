@@ -16,7 +16,19 @@ pub enum Collider {
 /// A collider placed in world (or parent) space via a Transform2D.
 pub struct ColliderInstance<'a> {
     pub shape: &'a Collider,
-    pub xform: Transform2D,
+    pub xform: &'a Transform2D,
+}
+
+impl<'a> Into<(&'a Collider, &'a Transform2D)> for ColliderInstance<'a> {
+    fn into(self) -> (&'a Collider, &'a Transform2D) {
+        (self.shape, self.xform)
+    }
+}
+
+impl<'a> Into<ColliderInstance<'a>> for (&'a Collider, &'a Transform2D) {
+    fn into(self) -> ColliderInstance<'a> {
+        ColliderInstance::new(self.0, self.1)
+    }
 }
 
 /// Result of a collision test.
@@ -60,20 +72,8 @@ impl<'a> ColliderInstance<'a> {
     /// Create a new ColliderInstance with an optional parent transform.
     /// If `parent` is Some, `xform` is treated as local and transformed into
     /// parent space.
-    pub fn new(shape: &'a Collider, xform: Transform2D, parent: Option<&Transform2D>) -> Self {
-        let xform = match parent {
-            Some(p) => xform.transform(p),
-            None => xform,
-        };
+    pub fn new(shape: &'a Collider, xform: &'a Transform2D) -> Self {
         Self { shape, xform }
-    }
-
-    /// Apply an additional parent transform (layered nesting).
-    pub fn apply_transform(&self, parent: &Transform2D) -> Self {
-        Self {
-            shape: self.shape,
-            xform: self.xform.transform(parent),
-        }
     }
 
     /// Test whether a world-space point lies inside this collider.

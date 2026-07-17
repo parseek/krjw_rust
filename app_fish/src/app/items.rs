@@ -665,7 +665,7 @@ impl Items {
                 layout,
                 Vec2::ZERO,
                 origin,
-                transform.move_by(Vec2::new(5.0, 5.0)),
+                transform. with_move_by(Vec2::new(5.0, 5.0)),
                 [0.0, 0.0, 0.0, 0.5 * final_alpha],
                 0.0,
                 sprite_buffer,

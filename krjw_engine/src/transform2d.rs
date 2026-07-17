@@ -61,19 +61,26 @@ impl Transform2D {
     }
 
     /// Builder: translate by `pos`. / 构建器模式：位移。
-    pub fn move_by(mut self, pos: Vec2) -> Self {
+    pub fn with_move_by(mut self, pos: Vec2) -> Self {
         self.pos += pos;
         self
     }
 
+    /// Builder: translate by rotated `pos`. / 构建器模式：按旋转位移。
+    pub fn with_walk_by(mut self, pos: Vec2) -> Self {
+        let (sin, cos) = self.rot.sin_cos();
+        self.pos += Vec2::new(sin, cos).rotate(pos);
+        self
+    }
+
     /// Builder: scale by `scale`. / 构建器模式：缩放。
-    pub fn scale_by(mut self, scale: Vec2) -> Self {
+    pub fn with_scale_by(mut self, scale: Vec2) -> Self {
         self.scale *= scale;
         self
     }
 
     /// Builder: rotate by `rot` radians. / 构建器模式：旋转（弧度）。
-    pub fn rotate_by(mut self, rot: f32) -> Self {
+    pub fn with_rotate_by(mut self, rot: f32) -> Self {
         self.rot += rot;
         self
     }
@@ -89,7 +96,7 @@ impl Transform2D {
     ///   `result.pos  = parent.pos + rotate(self.pos, parent.rot) * parent.scale`  
     ///   `result.scale = self.scale * parent.scale`  
     ///   `result.rot   = self.rot + parent.rot`
-    pub fn transform(&self, parent: &Transform2D) -> Self {
+    pub fn with_transform(&self, parent: &Transform2D) -> Self {
         let (sin, cos) = parent.rot.sin_cos();
         let rotated = Vec2::new(
             self.pos.x * cos - self.pos.y * sin,
@@ -104,7 +111,7 @@ impl Transform2D {
 
     /// Convenience: compose with raw components. / 便捷方法：与原始组件组合。
     pub fn transform_components(&self, pos: Vec2, scale: Vec2, rot: f32) -> Self {
-        self.transform(&Self { pos, scale, rot })
+        self.with_transform(&Self { pos, scale, rot })
     }
 
     /// Transform a point from this entity's local space to parent space.

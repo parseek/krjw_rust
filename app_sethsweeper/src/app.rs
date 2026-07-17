@@ -463,7 +463,7 @@ impl App {
 
             let inst = ColliderInstance {
                 shape: &tile.collider,
-                xform: Transform2D {
+                xform: &Transform2D {
                     pos: tile.pos,
                     scale: Vec2::splat(tile.scale),
                     rot: tile.rot,
@@ -493,7 +493,7 @@ impl App {
 
         let mut push_sprite = |obj: &Sprite2DObject<TextureInfoArced, Transform2D>| {
             let mut shadow = obj.clone();
-            shadow.transform = shadow.transform.move_by(shadow_offset);
+            shadow.transform = shadow.transform.with_move_by(shadow_offset);
             shadow.color = shadow_color;
             buf.push(&shadow);
             buf.push(obj);
@@ -622,7 +622,7 @@ impl App {
         for (idx, tile) in self.tiles.iter().enumerate() {
             let inst = ColliderInstance {
                 shape: &tile.collider,
-                xform: Transform2D {
+                xform: &Transform2D {
                     pos: tile.pos,
                     scale: Vec2::splat(tile.scale),
                     rot: tile.rot,

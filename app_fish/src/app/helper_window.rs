@@ -35,7 +35,7 @@ impl HelperWindow {
             shape_batch.add_rect_no_uv(frame_pos, frame_size, Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.75 * alpha]);
             shape_batch.submit_and_draw(gfx)?;
             shape_batch.clear_batch();
-            atlas_text.render_layout(&self.layout, Vec2::ZERO, Vec2::ZERO, Transform2D::IDENTITY.move_by(text_pos), 
+            atlas_text.render_layout(&self.layout, Vec2::ZERO, Vec2::ZERO, Transform2D::IDENTITY.with_move_by(text_pos), 
                 [1.0, 1.0, 1.0, alpha], -1.0, sprite_buf);
             atlas_text.upload(&gfx)?;
             sprite_batch.draw_buffer_and_clear(gfx, sprite_buf, |x| (x.pos, x.scale, x.rot));
