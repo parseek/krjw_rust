@@ -110,6 +110,8 @@ pub struct AppContext {
     pub helper_window: helper_window::HelperWindow,
 
     pub items: items::Items,
+
+    pub dbg_window: bool,
 }
 
 impl AppContext {
@@ -159,14 +161,6 @@ impl AppContext {
         self.items = items::Items::default();
         self.items.init_layouts(&mut self.atlas_text, &self.gfx);
         self.items.auto_spawn_enabled = true;
-        
-        // 初始生成几个物品
-        let view_w = self.camera.viewport_size.x;
-        let view_h = self.camera.viewport_size.y;
-        for _ in 0..3 {
-            let item = items::Item::random();
-            self.items.new_item(item, view_w, view_h);
-        }
     }
 
     /// 🎉 在 pos 生成吃鱼粒子效果（被吃的鱼越大，粒子越大越多）
@@ -335,9 +329,9 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
     if ctx.p1_lives > 0 {
         let p1_result = ctx.fishes.check_interact(ctx.player1_fish.pos, ctx.player1_fish.size);
         if p1_result.eaten_count > 0 {
-            ctx.player1_fish.size = (ctx.player1_fish.size + p1_result.eaten_count as f32 * 0.5).min(ctx.player1_fish.max_size);
+            ctx.player1_fish.size = (ctx.player1_fish.size + p1_result.last_eaten_size / ctx.player1_fish.size).min(ctx.player1_fish.max_size);
             // 得分 + 粒子效果
-            let gain = (p1_result.eaten_count as f32 * 10.0) as i32;
+            let gain = (p1_result.eaten_count as f32 * 10.0 * p1_result.last_eaten_size / ctx.player1_fish.size) as i32;
             ctx.p1_score += gain;
             let eaten_species = p1_result.last_eaten_species.unwrap_or(fish::FishSpecies::Normal);
             ctx.spawn_eat_particles(ctx.player1_fish.pos, eaten_species, p1_result.last_eaten_size);
@@ -359,8 +353,8 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
     if ctx.p2_lives > 0 {
         let p2_result = ctx.fishes.check_interact(ctx.player2_fish.pos, ctx.player2_fish.size);
         if p2_result.eaten_count > 0 {
-            ctx.player2_fish.size = (ctx.player2_fish.size + p2_result.eaten_count as f32 * 0.5).min(ctx.player2_fish.max_size);
-            let gain = (p2_result.eaten_count as f32 * 10.0) as i32;
+            ctx.player2_fish.size = (ctx.player2_fish.size + p2_result.last_eaten_size / ctx.player2_fish.size).min(ctx.player2_fish.max_size);
+            let gain = (p2_result.eaten_count as f32 * 10.0 * p2_result.last_eaten_size / ctx.player2_fish.size) as i32;
             ctx.p2_score += gain;
             let eaten_species = p2_result.last_eaten_species.unwrap_or(fish::FishSpecies::Normal);
             ctx.spawn_eat_particles(ctx.player2_fish.pos, eaten_species, p2_result.last_eaten_size);
@@ -427,6 +421,36 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
         ctx.winner_text = "👑 P1 胜利！💀".to_string();
         play_sound(ctx, "snd_fail");
     }
+
+    Ok(())
+}
+
+fn render_dbg_hud(ctx: &mut AppContext) -> Result<()> {
+    let half_w = ctx.camera.viewport_size.x * 0.5;
+    let half_h = ctx.camera.viewport_size.y * 0.5;
+
+    let content_plsize = format!("\
+p1_size: {}
+p2_size: {}
+prog: {}\
+", ctx.player1_fish.size, ctx.player2_fish.size, ctx.fishes.progress_size);
+    let content_facc = ctx.fishes.dbg_info();
+    let content_item = ctx.items.dbg_info();
+
+    let content = vec![content_plsize, content_facc, content_item].join("\n");
+
+    let metrics = Metrics::new(16.0, 20.0);
+    let attrs = Attrs::new().family(cosmic_text::Family::Name("Sarasa Mono SC"));
+    let content_layout = ctx.atlas_text.layout_text(&content, metrics, attrs, &ctx.gfx.device)?;
+    let offset = 24.0;
+    let margin = 8.0;
+
+    let box_tl = Vec2::new(-half_w + offset, -half_h + offset);
+    let txt_tl = Vec2::new(-half_w + offset + margin, -half_h + offset + margin);
+    let box_sz = content_layout.content_size + 2.0 * margin;
+
+    ctx.shape_batch.add_rect_no_uv(box_tl, box_sz, Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.5]);
+    ctx.atlas_text.render_layout(&content_layout, txt_tl, Vec2::ZERO, Transform2D::IDENTITY, [1.0;4], 0.0, &mut ctx.sprite_buf);
 
     Ok(())
 }
@@ -502,6 +526,10 @@ fn render_hud(ctx: &mut AppContext) -> Result<()> {
     // P2 文字：用 content_size 右对齐（右上角对齐）
     ctx.atlas_text.render_layout(&p2_layout, p2_pos, Vec2::new(p2_layout.content_size.x, 0.0), Transform2D::IDENTITY, text_color, 1.0, &mut ctx.sprite_buf);
     ctx.atlas_text.render_layout(&p2_s_layout, p2_score_pos, Vec2::new(p2_s_layout.content_size.x, 0.0), Transform2D::IDENTITY, [1.0, 1.0, 0.0, 1.0], 1.0, &mut ctx.sprite_buf);
+
+    if ctx.dbg_window { 
+        render_dbg_hud(ctx)?;
+    }
 
     Ok(())
 }
@@ -601,7 +629,7 @@ fn render_frame(ctx: &mut AppContext, dt: f64) -> Result<()> {
     ctx.sprite_batch.set_mvp(&ctx.gfx, &mvp);
     ctx.sprite_batch.draw_buffer_and_clear(&ctx.gfx, &mut ctx.sprite_buf, |xform| (xform.pos, xform.scale, xform.rot));
 
-    ctx.helper_window.render(dt as f32, ctx.camera.viewport_size, &mut ctx.atlas_text, &mut ctx.sprite_buf, &mut ctx.sprite_batch, &mut ctx.shape_batch, &ctx.gfx);
+    ctx.helper_window.render(dt as f32, ctx.camera.viewport_size, &mut ctx.atlas_text, &mut ctx.sprite_buf, &mut ctx.sprite_batch, &mut ctx.shape_batch, &ctx.gfx)?;
 
     ctx.gfx.present()?;
     Ok(())
@@ -695,7 +723,7 @@ impl App {
             window, driver, gfx, sprite_batch, shape_batch, camera, timer, sprite_buf, atlas_text,
             time_elapsed: 0.0, audio, sounds,
             player1_fish, player2_fish, fishes,
-            p1_lives: 5, p2_lives: 5, max_lives: 5,
+            p1_lives: 5, p2_lives: 5, max_lives: 10,
             p1_invincible: 0.0, p2_invincible: 0.0, invincible_duration: 1.5,
             p1_slow_timer: 0.0, p2_slow_timer: 0.0, slow_duration: 1.0,
             shake_timer: 0.0, shake_intensity: 0.0,
@@ -704,10 +732,11 @@ impl App {
             p1_score: 0, p2_score: 0,
             score_popups: Vec::new(),
             reset_hold_timer: 0.0,
-            reset_hold_duration: 5.0,
+            reset_hold_duration: 2.0,
             intro_played: false,
             helper_window,
-            items
+            items,
+            dbg_window: if Ok("1".to_string()) == std::env::var("RJW_DEBUG") { true } else { false },
         };
         ctx.restart();
         self.ctx = Some(ctx);

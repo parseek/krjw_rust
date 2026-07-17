@@ -42,7 +42,7 @@ impl FishSpecies {
     }
 
     pub fn base_color(&self) -> [f32; 3] {
-        match self { // 因为 Emoji 本来带有颜色，调色无需过度
+        match self {
             Self::Normal    => [0.6, 0.7, 0.9],
             Self::Tropical  => [1.0, 0.8, 0.7],
             Self::Puffer    => [0.6, 0.9, 0.6],
@@ -94,32 +94,32 @@ impl FishSpecies {
         match self {
             Self::Normal    => 0.0,
             Self::Tropical  => 0.0,
-            Self::Crab      => 22.0,
-            Self::Puffer    => 22.0,
-            Self::Dolphin   => 22.0,
-            Self::Octopus   => 24.0,
-            Self::Lobster   => 22.0,
-            Self::Shark     => 22.0,
-            Self::Turtle    => 40.0,
-            Self::Whale     => 40.0,
-            Self::WaterHawk => 30.0,
+            Self::Crab      => 42.0,
+            Self::Puffer    => 42.0,
+            Self::Dolphin   => 42.0,
+            Self::Octopus   => 44.0,
+            Self::Lobster   => 42.0,
+            Self::Shark     => 42.0,
+            Self::Turtle    => 44.0,
+            Self::Whale     => 44.0,
+            Self::WaterHawk => 50.0,
         }
     }
 
     /// 该种类最大生成速率（条/秒），达到 unlock_size 后逐渐达到此值
     pub fn max_spawn_rate(&self) -> f32 {
         match self {
-            Self::Normal    => 0.8,
-            Self::Tropical  => 0.6,
-            Self::Puffer    => 0.4,
-            Self::Octopus   => 0.2,
-            Self::Whale     => 0.15,
-            Self::Shark     => 0.2,
-            Self::Dolphin   => 0.4,
-            Self::Crab      => 0.4,
-            Self::Lobster   => 0.2,
+            Self::Normal    => 0.3,
+            Self::Tropical  => 0.3,
+            Self::Puffer    => 0.3,
+            Self::Octopus   => 0.15,
+            Self::Whale     => 0.1,
+            Self::Shark     => 0.1,
+            Self::Dolphin   => 0.2,
+            Self::Crab      => 0.2,
+            Self::Lobster   => 0.1,
             Self::Turtle    => 0.15,
-            Self::WaterHawk => 0.02,
+            Self::WaterHawk => 0.05,
         }
     }
 
@@ -151,6 +151,9 @@ pub enum MovementPattern {
     Stationary,
 }
 
+/// 鱼消失淡出持续时间（秒）
+const DISAPPEAR_DURATION: f32 = 1.0;
+
 /// 🐟 鱼
 pub struct Fish {
     pub species: FishSpecies,
@@ -169,6 +172,12 @@ pub struct Fish {
     pub spawn_fade: f32,
     /// 淡入总时长（秒）
     pub spawn_fade_duration: f32,
+    pub rolling_speed: f32,
+    pub rot: f32,
+    /// 消失淡出剩余时间（秒），Some 表示正在淡出，None 表示正常状态
+    pub disappear: Option<f32>,
+    /// 存活年龄（秒），用于数量淘汰
+    pub age: f32,
 }
 
 impl Fish {
@@ -192,6 +201,10 @@ impl Fish {
             eaten: false,
             spawn_fade: 1.0,
             spawn_fade_duration: 1.0,
+            rolling_speed: if fastrand::f32() < 0.01 { 360.0_f32.to_radians() } else { 0.0 },
+            rot: 0.0,
+            disappear: None,
+            age: 0.0,
         }
     }
 
@@ -212,28 +225,24 @@ impl Fish {
 
         // 生成 movement、pos、facing 三元组
         let (pos, facing, movement) = if pattern_roll < 0.25 {
-            // 左右边缘进入
             let from_left = fastrand::f32() < 0.5;
             let y = (fastrand::f32() - 0.5) * view_h;
             let x = if from_left { -half_w - size } else { half_w + size };
             let facing = if from_left { FishFacing::Right } else { FishFacing::Left };
             (Vec2::new(x, y), facing, HorizontalEntry { from_left, speed: 50.0 + fastrand::f32() * 150.0 })
         } else if pattern_roll < 0.45 {
-            // 上下边缘进入
             let from_top = fastrand::f32() < 0.5;
             let x = (fastrand::f32() - 0.5) * view_w;
             let y = if from_top { -half_h - size } else { half_h + size };
             let facing = if fastrand::f32() < 0.5 { FishFacing::Left } else { FishFacing::Right };
             (Vec2::new(x, y), facing, VerticalEntry { from_top, speed: 40.0 + fastrand::f32() * 120.0 })
         } else if pattern_roll < 0.80 {
-            // 波浪
             let x = (fastrand::f32() - 0.5) * view_w;
             let y = (fastrand::f32() - 0.5) * view_h;
             let dir = if fastrand::f32() < 0.5 { 1.0 } else { -1.0 };
             let facing = if dir > 0.0 { FishFacing::Right } else { FishFacing::Left };
             (Vec2::new(x, y), facing, Wave { speed: 30.0 + fastrand::f32() * 100.0, amplitude: 20.0 + fastrand::f32() * 60.0, frequency: 1.0 + fastrand::f32() * 3.0, phase: fastrand::f32() * 6.28, initial_x: x, direction: dir })
         } else {
-            // 直线
             let angle = fastrand::f32() * 6.28;
             let speed = 40.0 + fastrand::f32() * 120.0;
             let vel = Vec2::new(angle.cos() * speed, angle.sin() * speed);
@@ -260,76 +269,89 @@ impl Fish {
             eaten: false,
             spawn_fade: fade_dur,
             spawn_fade_duration: fade_dur,
+            rolling_speed: if fastrand::f32() < 0.01 { 360.0_f32.to_radians() } else { 0.0 },
+            rot: 0.0,
+            disappear: None,
+            age: 0.0,
         }
     }
 
+    /// 开始消失淡出
+    pub fn start_disappear(&mut self) {
+        if self.disappear.is_none() && !self.eaten {
+            self.disappear = Some(DISAPPEAR_DURATION);
+        }
+    }
+
+    /// 是否正在淡出
+    pub fn is_disappearing(&self) -> bool {
+        self.disappear.is_some()
+    }
+
     pub fn update(&mut self, dt: f32, view_w: f32, view_h: f32) {
+        // 累加年龄
+        self.age += dt;
+
+        // 更新消失计时器
+        if let Some(d) = self.disappear {
+            let new_d = d - dt;
+            if new_d <= 0.0 {
+                self.eaten = true;
+                self.disappear = None;
+            } else {
+                self.disappear = Some(new_d);
+            }
+        }
+
+        // 如果已标记为被吃或消失完成，不更新运动
+        if self.eaten {
+            return;
+        }
+
+        // 入场淡入
         if self.spawn_fade > 0.0 {
             self.spawn_fade = (self.spawn_fade - dt).max(0.0);
             self.alpha = 1.0 - (self.spawn_fade / self.spawn_fade_duration);
         }
+
         use MovementPattern::*;
+        self.rot += self.rolling_speed * dt;
+        let half_w = view_w * 0.5;
+        let half_h = view_h * 0.5;
+
         match &mut self.movement {
             Stationary => {}
             HorizontalEntry { from_left, speed } => {
-                let half_w = view_w * 0.5;
                 let dir = if *from_left { 1.0 } else { -1.0 };
                 self.pos.x += dir * *speed * dt;
                 self.facing = if *from_left { FishFacing::Right } else { FishFacing::Left };
-                if self.pos.x > half_w + self.size || self.pos.x < -half_w - self.size {
-                    *from_left = fastrand::f32() < 0.5;
-                    self.pos.y = (fastrand::f32() - 0.5) * view_h;
-                    self.pos.x = if *from_left { -half_w - self.size } else { half_w + self.size };
-                    *speed = 50.0 + fastrand::f32() * 150.0;
-                    self.facing = if *from_left { FishFacing::Right } else { FishFacing::Left };
+                // 超出边界触发淡出
+                if self.pos.x > half_w + self.size * 2.0 || self.pos.x < -half_w - self.size * 2.0 {
+                    self.start_disappear();
                 }
             }
             VerticalEntry { from_top, speed } => {
-                let half_h = view_h * 0.5;
                 let dir = if *from_top { 1.0 } else { -1.0 };
                 self.pos.y += dir * *speed * dt;
-                if self.pos.y > half_h + self.size || self.pos.y < -half_h - self.size {
-                    *from_top = fastrand::f32() < 0.5;
-                    self.pos.x = (fastrand::f32() - 0.5) * view_w;
-                    self.pos.y = if *from_top { -half_h - self.size } else { half_h + self.size };
-                    *speed = 40.0 + fastrand::f32() * 120.0;
+                if self.pos.y > half_h + self.size * 2.0 || self.pos.y < -half_h - self.size * 2.0 {
+                    self.start_disappear();
                 }
             }
             Wave { speed, amplitude, frequency, phase, initial_x: _, direction } => {
-                let half_w = view_w * 0.5;
                 self.pos.x += *direction * *speed * dt;
                 self.facing = if *direction > 0.0 { FishFacing::Right } else { FishFacing::Left };
                 let wave_offset = (*amplitude) * (self.pos.x * *frequency * 0.01 + *phase).sin();
                 self.pos.y += wave_offset * dt * 2.0;
-                if self.pos.x > half_w + self.size || self.pos.x < -half_w - self.size {
-                    *direction = if self.pos.x > 0.0 { -1.0 } else { 1.0 };
-                    self.pos.y = (fastrand::f32() - 0.5) * view_h;
-                    self.pos.x = if *direction > 0.0 { -half_w - self.size } else { half_w + self.size };
-                    *speed = 30.0 + fastrand::f32() * 100.0;
-                    *amplitude = 20.0 + fastrand::f32() * 60.0;
-                    *frequency = 1.0 + fastrand::f32() * 3.0;
-                    *phase = fastrand::f32() * 6.28;
-                    self.facing = if *direction > 0.0 { FishFacing::Right } else { FishFacing::Left };
+                if self.pos.x > half_w + self.size * 2.0 || self.pos.x < -half_w - self.size * 2.0 {
+                    self.start_disappear();
                 }
             }
             Linear { velocity } => {
-                let half_w = view_w * 0.5;
-                let half_h = view_h * 0.5;
                 self.pos += *velocity * dt;
                 self.facing = if velocity.x > 0.0 { FishFacing::Right } else { FishFacing::Left };
-                if self.pos.x < -half_w - self.size || self.pos.x > half_w + self.size ||
-                   self.pos.y < -half_h - self.size || self.pos.y > half_h + self.size {
-                    let angle = fastrand::f32() * 6.28;
-                    let speed = 40.0 + fastrand::f32() * 120.0;
-                    *velocity = Vec2::new(angle.cos() * speed, angle.sin() * speed);
-                    let edge = (fastrand::f32() * 4.0) as i32;
-                    match edge {
-                        0 => { self.pos = Vec2::new(-half_w - self.size, (fastrand::f32() - 0.5) * view_h); }
-                        1 => { self.pos = Vec2::new(half_w + self.size, (fastrand::f32() - 0.5) * view_h); }
-                        2 => { self.pos = Vec2::new((fastrand::f32() - 0.5) * view_w, -half_h - self.size); }
-                        _ => { self.pos = Vec2::new((fastrand::f32() - 0.5) * view_w, half_h + self.size); }
-                    }
-                    self.facing = if velocity.x > 0.0 { FishFacing::Right } else { FishFacing::Left };
+                if self.pos.x < -half_w - self.size * 2.0 || self.pos.x > half_w + self.size * 2.0 ||
+                   self.pos.y < -half_h - self.size * 2.0 || self.pos.y > half_h + self.size * 2.0 {
+                    self.start_disappear();
                 }
             }
         }
@@ -353,25 +375,37 @@ impl Fish {
         Transform2D {
             pos: self.pos,
             scale: match self.facing {
-                // Emoji 自然方向朝左，所以朝左不翻转，朝右水平翻转
                 FishFacing::Left => Vec2::ONE,
                 FishFacing::Right => Vec2::new(-1.0, 1.0),
             } * self.size / self.max_size * 2.0,
-            rot: 0.0
+            rot: self.rot,
+        }
+    }
+
+    /// 获取消失因子（0~1），用于淡出透明度
+    pub fn disappear_factor(&self) -> f32 {
+        if let Some(d) = self.disappear {
+            (d / DISAPPEAR_DURATION).max(0.0).min(1.0)
+        } else {
+            1.0
         }
     }
 
     pub fn add_to_buffer(&self, _gfx: &graphic::d3d11::D3D11, atlas_text: &mut AtlasText, sprite_buffer: &mut Sprite2DBuffer<TextureInfoArced, Transform2D>) {
         if self.eaten { return; }
-        let final_color = [self.color[0], self.color[1], self.color[2], self.color[3] * self.alpha];
+        let disappear_factor = self.disappear_factor();
+        let final_alpha = self.alpha * disappear_factor;
+        let final_color = [self.color[0], self.color[1], self.color[2], self.color[3] * final_alpha];
         // 黑色阴影
-        atlas_text.render_layout(&self.shape_layout, Vec2::ZERO, self.origin, self.get_transform().move_by(Vec2::new(5.0, 5.0)), [0.0, 0.0, 0.0, 0.3 * self.alpha], 0.0, sprite_buffer);
+        atlas_text.render_layout(&self.shape_layout, Vec2::ZERO, self.origin, self.get_transform().move_by(Vec2::new(5.0, 5.0)), [0.0, 0.0, 0.0, 0.3 * final_alpha], 0.0, sprite_buffer);
         // 本体
         atlas_text.render_layout(&self.shape_layout, Vec2::ZERO, self.origin, self.get_transform(), final_color, 0.0, sprite_buffer);
     }
 
     pub fn dbg_add_shape(&self, shape_batch_2d: &mut ShapeBatch2D) {
         if self.eaten { return; }
-        shape_batch_2d.add_circle_no_uv(self.pos, self.size * 0.6, [self.color[0], self.color[1], self.color[2], 0.5 * self.alpha], 24);
+        let disappear_factor = self.disappear_factor();
+        let final_alpha = self.alpha * disappear_factor;
+        shape_batch_2d.add_circle_no_uv(self.pos, self.size * 0.6, [self.color[0], self.color[1], self.color[2], 0.5 * final_alpha], 24);
     }
 }

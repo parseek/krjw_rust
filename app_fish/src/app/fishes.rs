@@ -3,6 +3,9 @@ use glam::Vec2;
 use krjw_engine::{AtlasText, ShapeBatch2D, Sprite2DBuffer, TextureInfoArced, Transform2D, graphic};
 use std::collections::HashMap;
 
+/// 自动鱼最大数量上限
+const MAX_FISH_COUNT: usize = 200;
+
 pub struct Fishes {
     pub fish_list: Vec<Fish>,
     view_w: f32,
@@ -30,12 +33,60 @@ impl Fishes {
         }
     }
 
+    pub fn dbg_info(&self) -> String {
+        let total = self.fish_list.len();
+        let disappearing = self.fish_list.iter().filter(|f| f.is_disappearing()).count();
+        let fading_in = self.fish_list.iter().filter(|f| f.spawn_fade > 0.0).count();
+        
+        let species_count: Vec<String> = self.spawn_acc.iter()
+            .map(|(species, acc)| format!("{:?}:{:.2}", species, acc))
+            .collect();
+        
+        format!(
+            "鱼群状态:\n\
+            　总数: {} (淡入中: {}, 淡出中: {})\n\
+            　进度尺寸: {:.1}\n\
+            　生成累计: {}\n\
+            　各物种累计: {}",
+            total,
+            fading_in,
+            disappearing,
+            self.progress_size,
+            self.spawn_acc.values().sum::<f32>(),
+            species_count.join(", ")
+        )
+    }
+
     pub fn set_view_size(&mut self, w: f32, h: f32) {
         self.view_w = w;
         self.view_h = h;
     }
 
+    /// 移除最旧的鱼（年龄最大），若已在淡出则直接标记移除，否则触发淡出
+    fn remove_oldest(&mut self) {
+        if self.fish_list.is_empty() { return; }
+        let mut oldest_idx = 0;
+        let mut max_age = 0.0;
+        for (i, fish) in self.fish_list.iter().enumerate() {
+            if fish.age > max_age {
+                max_age = fish.age;
+                oldest_idx = i;
+            }
+        }
+        let fish = &mut self.fish_list[oldest_idx];
+        if fish.is_disappearing() {
+            // 已在淡出，直接标记移除
+            fish.eaten = true;
+        } else {
+            fish.start_disappear();
+        }
+    }
+
     pub fn spawn_one_of_species(&mut self, species: FishSpecies, atlas_text: &mut AtlasText, gfx: &graphic::d3d11::D3D11) {
+        // 确保不超出数量上限
+        if self.fish_list.len() >= MAX_FISH_COUNT {
+            self.remove_oldest();
+        }
         let fish = Fish::new_random_with_species(self.view_w, self.view_h, species, atlas_text, gfx);
         self.fish_list.push(fish);
     }
@@ -55,8 +106,8 @@ impl Fishes {
                 continue;
             }
 
-            // 从 unlock 到 unlock+50 线性提升到 max_spawn_rate
-            let progress = ((self.progress_size - unlock) / 50.0).min(1.0);
+            // 从 unlock 到 unlock+25 线性提升到 max_spawn_rate
+            let progress = ((self.progress_size - unlock) / 25.0).min(1.0);
             let rate = progress * species.max_spawn_rate();
 
             if rate <= 0.0 { continue; }
@@ -65,7 +116,7 @@ impl Fishes {
             *acc += rate * dt;
 
             let mut spawn_count = 0u32;
-            while *acc >= 1.0 && self.fish_list.len() + needs_spawn.len() < 35 {
+            while *acc >= 1.0 && self.fish_list.len() + needs_spawn.len() < MAX_FISH_COUNT {
                 *acc -= 1.0;
                 spawn_count += 1;
             }
@@ -93,6 +144,7 @@ impl Fishes {
             if fish.eaten { continue; }
             // 淡入中的鱼无法交互（既不能被吃也不能伤害玩家）
             if fish.spawn_fade > 0.0 { continue; }
+            // 正在淡出的鱼仍然可以交互（玩家可以吃掉它）
             let d = fish.pos - player_pos;
             let r_sum = fish.size * 0.6 + player_radius;
             if d.length_squared() > r_sum * r_sum { continue; }
@@ -119,6 +171,8 @@ impl Fishes {
         for fish in &mut self.fish_list {
             fish.update(dt, self.view_w, self.view_h);
         }
+        // 移除被吃或消失完成的鱼
+        self.fish_list.retain(|fish| !fish.eaten);
     }
 
     pub fn add_to_buffer(&self, gfx: &graphic::d3d11::D3D11, atlas_text: &mut AtlasText, sprite_buffer: &mut Sprite2DBuffer<TextureInfoArced, Transform2D>) {

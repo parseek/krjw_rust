@@ -6,6 +6,11 @@ use krjw_engine::{
 };
 use std::collections::HashMap;
 
+/// 物品最大数量上限
+const MAX_ITEMS_COUNT: usize = 30;
+/// 物品消失淡出持续时间（秒）
+const DISAPPEAR_DURATION: f32 = 0.6;
+
 // ============================================================
 // 移动模式（与鱼群共用）
 // ============================================================
@@ -107,11 +112,6 @@ pub enum Item {
     SizeToLife,
     /// 交换两个玩家的大小
     SizeSwap,
-    // 未来可添加：
-    // SpeedBoost,
-    // Invincibility,
-    // Magnet,
-    // etc.
 }
 
 impl Item {
@@ -169,16 +169,14 @@ impl Item {
     }
 
     /// 解锁所需的最小玩家总大小（两个玩家之和）
-    /// 如果总大小小于此值，该物品不会生成
     pub fn unlock_threshold(&self) -> f32 {
         match self {
-            Self::SizeToLife => 70.0,   
-            Self::SizeSwap => 70.0,
+            Self::SizeToLife => 45.0,   
+            Self::SizeSwap => 45.0,
         }
     }
 
     /// 基础生成速率（每秒生成次数，在解锁后全速）
-    /// 实际生成率会乘以一个进度因子（见 Items 中的计算）
     pub fn base_spawn_rate(&self) -> f32 {
         match self {
             Self::SizeToLife => 0.02,
@@ -227,7 +225,11 @@ pub struct Items {
     i_size: Vec<f32>,
     i_type: Vec<Item>,
     i_pltouched: Vec<bool>,
+    i_hint: Vec<bool>,
     i_fade_elapsed: Vec<f32>,
+    i_age: Vec<f32>,                // 存活年龄（秒）
+    i_disappear: Vec<Option<f32>>,  // 消失淡出剩余时间（秒）
+    i_pending_remove: Vec<bool>,    // 待移除标记
 
     // ---- 布局缓存 ----
     layouts: HashMap<Item, TextLayout>,
@@ -236,12 +238,42 @@ pub struct Items {
     // ---- 自动生成控制 ----
     pub auto_spawn_enabled: bool,
     spawn_timer: f32,
-    spawn_interval: f32,       // 基础间隔，实际会动态调整
-    pub max_spawn_rate: f32,    // 最大总生成速率（每秒），由外部进度调节
-    pub progress_size: f32,     // 玩家总大小，用于解锁和速率调节
+    spawn_interval: f32,
+    pub max_spawn_rate: f32,
+    pub progress_size: f32,
+    pub hinted: bool,
 }
 
 impl Items {
+    pub fn dbg_info(&self) -> String {
+        let disappearing = self.i_disappear.iter().filter(|d| d.is_some()).count();
+        let fading_in = self.i_alpha.iter().filter(|&&a| a < 1.0).count();
+        
+        let type_count: Vec<String> = self.i_type.iter()
+            .fold(HashMap::new(), |mut acc, item| {
+                *acc.entry(item.name()).or_insert(0) += 1;
+                acc
+            })
+            .iter()
+            .map(|(name, count)| format!("{}:{}", name, count))
+            .collect();
+        
+        format!(
+            "物品状态:\n\
+            　总数: {} (淡入中: {}, 淡出中: {})\n\
+            　进度尺寸: {:.1}\n\
+            　生成计时器: {:.2}/{:.2}\n\
+            　各类型分布: {}",
+            self.len,
+            fading_in,
+            disappearing,
+            self.progress_size,
+            self.spawn_timer,
+            self.spawn_interval,
+            type_count.join(", ")
+        )
+    }
+
     // ─── 初始化 ──────────────────────────────────────────────────
 
     pub fn init_layouts(&mut self, atlas_text: &mut AtlasText, gfx: &graphic::d3d11::D3D11) {
@@ -258,16 +290,50 @@ impl Items {
             self.layouts.insert(item.clone(), layout);
             self.layout_render_size = render_size;
         }
-        // 默认启用自动生成
         self.auto_spawn_enabled = true;
-        self.spawn_interval = 5.0; // 基础间隔，会根据进度调整
-        self.max_spawn_rate = 0.5; // 每秒最多生成 0.5 个
+        self.spawn_interval = 5.0;
+        self.max_spawn_rate = 0.5;
         self.progress_size = 0.0;
     }
 
     // ─── 添加/移除 ──────────────────────────────────────────────
 
+    /// 开始消失淡出
+    fn start_disappear(&mut self, index: usize) {
+        if self.i_disappear[index].is_none() && !self.i_pltouched[index] {
+            self.i_disappear[index] = Some(DISAPPEAR_DURATION);
+        }
+    }
+
+    /// 是否正在淡出
+    fn is_disappearing(&self, index: usize) -> bool {
+        self.i_disappear[index].is_some()
+    }
+
+    /// 移除最旧的物品（年龄最大），若已在淡出则直接标记移除，否则触发淡出
+    fn remove_oldest(&mut self) {
+        if self.len == 0 { return; }
+        let mut oldest_idx = 0;
+        let mut max_age = 0.0;
+        for i in 0..self.len {
+            if self.i_age[i] > max_age {
+                max_age = self.i_age[i];
+                oldest_idx = i;
+            }
+        }
+        if self.is_disappearing(oldest_idx) {
+            self.i_pending_remove[oldest_idx] = true;
+        } else {
+            self.start_disappear(oldest_idx);
+        }
+    }
+
     pub fn new_item(&mut self, item: Item, view_w: f32, view_h: f32) {
+        // 确保不超出数量上限
+        if self.len >= MAX_ITEMS_COUNT {
+            self.remove_oldest();
+        }
+
         let size = item.random_size();
         let move_pattern = MovementPattern::random_new(view_w, view_h);
         let pos = move_pattern.random_new_pos(view_w, view_h, size);
@@ -279,7 +345,12 @@ impl Items {
         self.i_type.push(item);
         self.i_pltouched.push(false);
         self.i_fade_elapsed.push(0.0);
+        self.i_hint.push(self.hinted);
+        self.i_age.push(0.0);
+        self.i_disappear.push(None);
+        self.i_pending_remove.push(false);
         self.len += 1;
+        self.hinted = true;
     }
 
     pub fn swap_remove_item(&mut self, index: usize) {
@@ -291,6 +362,10 @@ impl Items {
         self.i_type.swap_remove(index);
         self.i_pltouched.swap_remove(index);
         self.i_fade_elapsed.swap_remove(index);
+        self.i_hint.swap_remove(index);
+        self.i_age.swap_remove(index);
+        self.i_disappear.swap_remove(index);
+        self.i_pending_remove.swap_remove(index);
         self.len -= 1;
     }
 
@@ -302,6 +377,10 @@ impl Items {
         self.i_type.clear();
         self.i_pltouched.clear();
         self.i_fade_elapsed.clear();
+        self.i_hint.clear();
+        self.i_age.clear();
+        self.i_disappear.clear();
+        self.i_pending_remove.clear();
         self.len = 0;
     }
 
@@ -336,7 +415,7 @@ impl Items {
     // ─── 生命周期 ──────────────────────────────────────────────
 
     pub fn finished(&self, index: usize, _view_w: f32, _view_h: f32) -> bool {
-        self.i_pltouched[index]
+        self.i_pltouched[index] || self.i_pending_remove[index]
     }
 
     pub fn clear_finished(&mut self, view_w: f32, view_h: f32) {
@@ -353,6 +432,11 @@ impl Items {
     // ─── 运动更新 ──────────────────────────────────────────────
 
     pub fn process_motion_single(&mut self, index: usize, view_w: f32, view_h: f32, dt: f32) {
+        // 如果已标记移除，不再更新
+        if self.i_pending_remove[index] || self.i_pltouched[index] {
+            return;
+        }
+
         let pos = &mut self.i_pos[index];
         let mov = &mut self.i_move[index];
         let half_w = view_w * 0.5;
@@ -366,21 +450,15 @@ impl Items {
             HorizontalEntry { from_left, speed } => {
                 let dir = if *from_left { 1.0 } else { -1.0 };
                 pos.x += dir * *speed * dt;
-                if pos.x > half_w + size || pos.x < -half_w - size {
-                    *from_left = fastrand::bool();
-                    pos.y = (fastrand::f32() - 0.5) * view_h;
-                    pos.x = if *from_left { -half_w - size } else { half_w + size };
-                    *speed = 50.0 + fastrand::f32() * 150.0;
+                if pos.x > half_w + size * 2.0 || pos.x < -half_w - size * 2.0 {
+                    self.start_disappear(index);
                 }
             }
             VerticalEntry { from_top, speed } => {
                 let dir = if *from_top { 1.0 } else { -1.0 };
                 pos.y += dir * *speed * dt;
-                if pos.y > half_h + size || pos.y < -half_h - size {
-                    *from_top = fastrand::bool();
-                    pos.x = (fastrand::f32() - 0.5) * view_w;
-                    pos.y = if *from_top { -half_h - size } else { half_h + size };
-                    *speed = 40.0 + fastrand::f32() * 120.0;
+                if pos.y > half_h + size * 2.0 || pos.y < -half_h - size * 2.0 {
+                    self.start_disappear(index);
                 }
             }
             Wave {
@@ -393,34 +471,19 @@ impl Items {
                 pos.x += *direction * *speed * dt;
                 let wave_offset = *amplitude * (pos.x * *frequency * 0.01 + *phase).sin();
                 pos.y += wave_offset * dt * 2.0;
-                if pos.x > half_w + size || pos.x < -half_w - size {
-                    *direction = if pos.x > 0.0 { -1.0 } else { 1.0 };
-                    pos.y = (fastrand::f32() - 0.5) * view_h;
-                    pos.x = if *direction > 0.0 { -half_w - size } else { half_w + size };
-                    *speed = 30.0 + fastrand::f32() * 100.0;
-                    *amplitude = 20.0 + fastrand::f32() * 60.0;
-                    *frequency = 1.0 + fastrand::f32() * 3.0;
-                    *phase = fastrand::f32() * 6.28;
+                if pos.x > half_w + size * 2.0 || pos.x < -half_w - size * 2.0 {
+                    self.start_disappear(index);
                 }
             }
             Linear { velocity } => {
                 pos.x += velocity.x * dt;
                 pos.y += velocity.y * dt;
-                if pos.x < -half_w - size
-                    || pos.x > half_w + size
-                    || pos.y < -half_h - size
-                    || pos.y > half_h + size
+                if pos.x < -half_w - size * 2.0
+                    || pos.x > half_w + size * 2.0
+                    || pos.y < -half_h - size * 2.0
+                    || pos.y > half_h + size * 2.0
                 {
-                    let angle = fastrand::f32() * 6.28;
-                    let spd = 40.0 + fastrand::f32() * 120.0;
-                    *velocity = Vec2::new(angle.cos() * spd, angle.sin() * spd);
-                    let edge = fastrand::u32(0..4);
-                    match edge {
-                        0 => *pos = Vec2::new(-half_w - size, (fastrand::f32() - 0.5) * view_h),
-                        1 => *pos = Vec2::new(half_w + size, (fastrand::f32() - 0.5) * view_h),
-                        2 => *pos = Vec2::new((fastrand::f32() - 0.5) * view_w, -half_h - size),
-                        _ => *pos = Vec2::new((fastrand::f32() - 0.5) * view_w, half_h + size),
-                    }
+                    self.start_disappear(index);
                 }
             }
         }
@@ -432,41 +495,13 @@ impl Items {
         }
     }
 
-    // ─── 自动生成逻辑（完全内置） ──────────────────────────────
+    // ─── 自动生成逻辑 ──────────────────────────────────────────
 
-    /// 尝试生成一个物品，基于当前进度和权重
-    fn try_auto_spawn(&mut self, view_w: f32, view_h: f32) {
-        if !self.auto_spawn_enabled || self.len >= 50 {
-            return; // 上限防止过多
-        }
-
-        // 计算当前总生成速率（基于进度）
-        let mut total_rate = 0.0;
-        for item in Item::ALL {
-            if self.progress_size >= item.unlock_threshold() {
-                total_rate += item.base_spawn_rate();
-            }
-        }
-        // 进度因子：0~1 之间，随着 progress_size 增加而增加
-        let progress_factor = (self.progress_size / 100.0).min(1.0);
-        let effective_rate = total_rate * (0.2 + 0.8 * progress_factor);
-        let effective_interval = 1.0 / effective_rate.max(0.001);
-
-        // 更新间隔（平滑变化）
-        self.spawn_interval = self.spawn_interval * 0.9 + effective_interval * 0.1;
-
-        // 计时器累加
-        let dt = 1.0 / 60.0; // 假设每帧调用，实际 dt 由外部传入，但我们在 update 中处理
-        // 但我们将在 update_foreach 中统一处理，这里只做决策
-    }
-
-    /// 外部调用，传入帧时间
     pub fn auto_spawn_step(&mut self, dt: f32, view_w: f32, view_h: f32) {
-        if !self.auto_spawn_enabled || self.len >= 50 {
+        if !self.auto_spawn_enabled || self.len >= MAX_ITEMS_COUNT {
             return;
         }
 
-        // 计算当前总生成速率
         let mut total_rate = 0.0;
         for item in Item::ALL {
             if self.progress_size >= item.unlock_threshold() {
@@ -476,13 +511,10 @@ impl Items {
         let progress_factor = (self.progress_size / 100.0).min(1.0);
         let effective_rate = total_rate * (0.2 + 0.8 * progress_factor);
 
-        // 累加计时器
         self.spawn_timer += dt * effective_rate;
 
-        // 当累积到 1 时生成
-        while self.spawn_timer >= 1.0 {
+        while self.spawn_timer >= 1.0 && self.len < MAX_ITEMS_COUNT {
             self.spawn_timer -= 1.0;
-            // 选择物品类型（基于权重，且只考虑已解锁的）
             let mut candidates = Vec::new();
             for item in Item::ALL {
                 if self.progress_size >= item.unlock_threshold() {
@@ -492,7 +524,6 @@ impl Items {
             if candidates.is_empty() {
                 continue;
             }
-            // 根据权重随机选择
             let total_weight: f32 = candidates.iter().map(|&item| item.weight()).sum();
             let mut r = fastrand::f32() * total_weight;
             let chosen = candidates
@@ -512,7 +543,7 @@ impl Items {
         }
     }
 
-    // ─── 主更新（外部每帧调用） ────────────────────────────────
+    // ─── 主更新 ──────────────────────────────────────────────────
 
     pub fn update_foreach(&mut self, dt: f64, view_w: f32, view_h: f32) {
         debug_assert_eq!(self.len, self.i_pos.len());
@@ -522,12 +553,30 @@ impl Items {
         debug_assert_eq!(self.len, self.i_size.len());
         debug_assert_eq!(self.len, self.i_pltouched.len());
         debug_assert_eq!(self.len, self.i_fade_elapsed.len());
+        debug_assert_eq!(self.len, self.i_hint.len());
+        debug_assert_eq!(self.len, self.i_age.len());
+        debug_assert_eq!(self.len, self.i_disappear.len());
+        debug_assert_eq!(self.len, self.i_pending_remove.len());
 
         let dt_f32 = dt as f32;
         const FADE_DURATION: f32 = 2.0;
 
-        // 1. 淡入
+        // 1. 淡入 + 年龄累加 + 消失计时器更新
         for i in 0..self.len {
+            self.i_age[i] += dt_f32;
+
+            // 更新消失计时器
+            if let Some(d) = self.i_disappear[i] {
+                let new_d = d - dt_f32;
+                if new_d <= 0.0 {
+                    self.i_disappear[i] = None;
+                    self.i_pending_remove[i] = true;
+                } else {
+                    self.i_disappear[i] = Some(new_d);
+                }
+            }
+
+            // 淡入
             if self.i_alpha[i] < 1.0 {
                 self.i_fade_elapsed[i] += dt_f32;
                 let progress = (self.i_fade_elapsed[i] / FADE_DURATION).min(1.0);
@@ -538,10 +587,10 @@ impl Items {
         // 2. 运动更新
         self.process_motion(view_w, view_h, dt_f32);
 
-        // 3. 自动生成（内部使用 progress_size）
+        // 3. 自动生成
         self.auto_spawn_step(dt_f32, view_w, view_h);
 
-        // 4. 清理被触碰的物品
+        // 4. 清理被触碰或待移除的物品
         self.clear_finished(view_w, view_h);
     }
 
@@ -553,19 +602,30 @@ impl Items {
             .unwrap_or_else(|| panic!("Layout for {:?} not initialized", item))
     }
 
+    /// 获取消失因子（0~1）
+    fn disappear_factor(&self, index: usize) -> f32 {
+        if let Some(d) = self.i_disappear[index] {
+            (d / DISAPPEAR_DURATION).max(0.0).min(1.0)
+        } else {
+            1.0
+        }
+    }
+
     pub fn draw_all(
         &self,
         atlas_text: &mut AtlasText,
         sprite_buffer: &mut Sprite2DBuffer<TextureInfoArced, Transform2D>,
     ) {
         for i in 0..self.len {
-            if self.i_pltouched[i] {
+            if self.i_pltouched[i] || self.i_pending_remove[i] {
                 continue;
             }
             let item_type = &self.i_type[i];
             let layout = self.get_layout(item_type);
             let pos = self.i_pos[i];
             let alpha = self.i_alpha[i];
+            let disappear_factor = self.disappear_factor(i);
+            let final_alpha = alpha * disappear_factor;
             let size = self.i_size[i];
 
             let layout_render_size = item_type.max_render_size() * 2.0;
@@ -578,7 +638,7 @@ impl Items {
 
             let origin = Vec2::new(layout_render_size * 0.5, layout_render_size * 0.5);
             let base_color = item_type.color();
-            let color = [base_color[0], base_color[1], base_color[2], base_color[3] * alpha];
+            let color = [base_color[0], base_color[1], base_color[2], base_color[3] * final_alpha];
 
             // 阴影
             atlas_text.render_layout(
@@ -586,7 +646,7 @@ impl Items {
                 Vec2::ZERO,
                 origin,
                 transform.move_by(Vec2::new(5.0, 5.0)),
-                [0.0, 0.0, 0.0, 0.5 * alpha],
+                [0.0, 0.0, 0.0, 0.5 * final_alpha],
                 0.0,
                 sprite_buffer,
             );
@@ -613,7 +673,6 @@ impl Items {
         self.len == 0
     }
 
-    /// 更新进度（外部在游戏循环中调用，通常由玩家总大小决定）
     pub fn set_progress(&mut self, total_size: f32) {
         self.progress_size = total_size;
     }
