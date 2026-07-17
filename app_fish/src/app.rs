@@ -4,14 +4,14 @@ use kira::sound::static_sound::StaticSoundData;
 use krjw_engine::{cosmic_text::{Attrs, Metrics}, winit::keyboard::KeyCode, *};
 use std::{collections::HashMap, io::Cursor, sync::mpsc::Receiver};
 
-use crate::app::items::Item;
-
 mod grid_render;
 mod fish;
 mod fishes;
 mod items;
 
 mod helper_window;
+
+use fish::ALL_FISH_SPECIES;
 
 /// 🎉 粒子 —— 吃鱼时的视觉效果
 pub struct Particle {
@@ -41,9 +41,7 @@ impl Particle {
 /// ✨ 浮动得分动画
 pub struct ScorePopup {
     pos: Vec2,
-    text: String,
     lifetime: f32,
-    max_lifetime: f32,
 }
 
 pub struct App {
@@ -112,6 +110,16 @@ pub struct AppContext {
     pub items: items::Items,
 
     pub dbg_window: bool,
+
+    // === 新增旋转无敌字段 ===
+    pub p1_rotate_timer: f32,
+    pub p2_rotate_timer: f32,
+    pub rotate_duration: f32,
+    pub rotate_speed: f32,
+
+    // === 调试功能 ===
+    pub debug_help_timer: f32,
+    pub debug_help_layout: Option<atlas_text::TextLayout>,
 }
 
 impl AppContext {
@@ -150,6 +158,9 @@ impl AppContext {
         self.fishes = fishes::Fishes::new();
         self.reset_hold_timer = 0.0;
         self.intro_played = false;
+        
+        self.p1_rotate_timer = 0.0;
+        self.p2_rotate_timer = 0.0;
     }
 
     fn restart(&mut self) {
@@ -239,18 +250,26 @@ impl AppContext {
                         // 尺寸减少，生命增加
                         player_fish.size = (player_fish.size * 0.8).max(6.0);
                         *lives = (*lives + 1).min(self.max_lives);
-                        // 可选播放音效
                         unsafe { audio_mgr.play(snd_item.clone()).unwrap_unchecked() };
-                        true // 标记触碰，物品将被移除
+                        true
                     }
                     items::Item::SizeSwap => {
                         // 交换两个玩家的大小
                         let temp = player_fish.size;
                         player_fish.size = other_fish.size;
                         other_fish.size = temp;
-                        // 上下限约束
                         player_fish.size = player_fish.size.clamp(4.0, player_fish.max_size);
                         other_fish.size = other_fish.size.clamp(4.0, other_fish.max_size);
+                        unsafe { audio_mgr.play(snd_item.clone()).unwrap_unchecked() };
+                        true
+                    }
+                    // === 新增：旋转无敌道具 ===
+                    items::Item::InvincibleRotate => {
+                        if player_idx == 0 {
+                            self.p1_rotate_timer = self.rotate_duration;
+                        } else {
+                            self.p2_rotate_timer = self.rotate_duration;
+                        }
                         unsafe { audio_mgr.play(snd_item.clone()).unwrap_unchecked() };
                         true
                     }
@@ -268,31 +287,56 @@ impl Default for App {
     }
 }
 
-fn fish_proc_move(player1_fish: &mut fish::Fish, player2_fish: &mut fish::Fish, driver: &EventDriver, dt: f32) {
+fn fish_proc_move(
+    player1_fish: &mut fish::Fish,
+    player2_fish: &mut fish::Fish,
+    driver: &EventDriver,
+    dt: f32,
+    p1_rotate_timer: f32,
+    p2_rotate_timer: f32,
+    p1_mult: f32,
+    p2_mult: f32,
+) {
     let v = 200.0;
-    if driver.keyboard().get_key_state(KeyCode::ArrowRight).is_pressed() {
-        player2_fish.pos.x += v * dt;
-        player2_fish.facing = fish::FishFacing::Right;
-    } else if driver.keyboard().get_key_state(KeyCode::ArrowLeft).is_pressed() {
-        player2_fish.pos.x -= v * dt;
-        player2_fish.facing = fish::FishFacing::Left;
+    
+    // P2 移动（方向键）
+    let mut p2_dx = 0.0;
+    let mut p2_dy = 0.0;
+    if driver.keyboard().get_key_state(KeyCode::ArrowRight).is_pressed() { p2_dx += 1.0; }
+    if driver.keyboard().get_key_state(KeyCode::ArrowLeft).is_pressed()  { p2_dx -= 1.0; }
+    if driver.keyboard().get_key_state(KeyCode::ArrowDown).is_pressed()  { p2_dy += 1.0; }
+    if driver.keyboard().get_key_state(KeyCode::ArrowUp).is_pressed()    { p2_dy -= 1.0; }
+    
+    if p2_dx != 0.0 || p2_dy != 0.0 {
+        let p2_input = Vec2::new(p2_dx, p2_dy).normalize_or_zero();
+        let p2_move = if p2_rotate_timer > 0.0 {
+            player2_fish.rotate_input(p2_input.x, p2_input.y) * p2_mult
+        } else {
+            p2_input
+        };
+        player2_fish.pos += p2_move * v * dt;
+        if p2_move.x > 0.0 { player2_fish.facing = fish::FishFacing::Right; }
+        else if p2_move.x < 0.0 { player2_fish.facing = fish::FishFacing::Left; }
     }
-    if driver.keyboard().get_key_state(KeyCode::ArrowDown).is_pressed() {
-        player2_fish.pos.y += v * dt;
-    } else if driver.keyboard().get_key_state(KeyCode::ArrowUp).is_pressed() {
-        player2_fish.pos.y -= v * dt;
-    }
-    if driver.keyboard().get_key_state(KeyCode::KeyD).is_pressed() {
-        player1_fish.pos.x += v * dt;
-        player1_fish.facing = fish::FishFacing::Right;
-    } else if driver.keyboard().get_key_state(KeyCode::KeyA).is_pressed() {
-        player1_fish.pos.x -= v * dt;
-        player1_fish.facing = fish::FishFacing::Left;
-    }
-    if driver.keyboard().get_key_state(KeyCode::KeyS).is_pressed() {
-        player1_fish.pos.y += v * dt;
-    } else if driver.keyboard().get_key_state(KeyCode::KeyW).is_pressed() {
-        player1_fish.pos.y -= v * dt;
+    
+    // P1 移动（WASD）
+    let mut p1_dx = 0.0;
+    let mut p1_dy = 0.0;
+    if driver.keyboard().get_key_state(KeyCode::KeyD).is_pressed() { p1_dx += 1.0; }
+    if driver.keyboard().get_key_state(KeyCode::KeyA).is_pressed() { p1_dx -= 1.0; }
+    if driver.keyboard().get_key_state(KeyCode::KeyS).is_pressed() { p1_dy += 1.0; }
+    if driver.keyboard().get_key_state(KeyCode::KeyW).is_pressed() { p1_dy -= 1.0; }
+    
+    if p1_dx != 0.0 || p1_dy != 0.0 {
+        let p1_input = Vec2::new(p1_dx, p1_dy).normalize_or_zero();
+        let p1_move = if p1_rotate_timer > 0.0 {
+            player1_fish.rotate_input(p1_input.x, p1_input.y) * p1_mult
+        } else {
+            p1_input
+        };
+        player1_fish.pos += p1_move * v * dt;
+        if p1_move.x > 0.0 { player1_fish.facing = fish::FishFacing::Right; }
+        else if p1_move.x < 0.0 { player1_fish.facing = fish::FishFacing::Left; }
     }
 }
 
@@ -316,7 +360,16 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
     ctx.player1_fish.update(dt_f, view_w, view_h);
     ctx.player2_fish.update(dt_f, view_w, view_h);
 
-    fish_proc_move(&mut ctx.player1_fish, &mut ctx.player2_fish, &ctx.driver, dt_f * p1_mult.min(p2_mult));
+    fish_proc_move(
+        &mut ctx.player1_fish,
+        &mut ctx.player2_fish,
+        &ctx.driver,
+        dt_f,
+        ctx.p1_rotate_timer,
+        ctx.p2_rotate_timer,
+        p1_mult,
+        p2_mult,
+    );
 
     // 更新进度 = sum(两个玩家 size)
     ctx.fishes.progress_size = (ctx.player1_fish.size + ctx.player2_fish.size).max(ctx.fishes.progress_size);
@@ -327,10 +380,16 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
 
     // ── 玩家1 ──
     if ctx.p1_lives > 0 {
-        let p1_result = ctx.fishes.check_interact(ctx.player1_fish.pos, ctx.player1_fish.size);
+        let invincible = ctx.p1_rotate_timer > 0.0;
+        let eat_multiplier = if invincible { 10.0 } else { 1.0 };
+        let p1_result = ctx.fishes.check_interact_advanced(
+            ctx.player1_fish.pos,
+            ctx.player1_fish.size,
+            invincible,
+            eat_multiplier,
+        );
         if p1_result.eaten_count > 0 {
             ctx.player1_fish.size = (ctx.player1_fish.size + p1_result.last_eaten_size / ctx.player1_fish.size).min(ctx.player1_fish.max_size);
-            // 得分 + 粒子效果
             let gain = (p1_result.eaten_count as f32 * 10.0 * p1_result.last_eaten_size / ctx.player1_fish.size) as i32;
             ctx.p1_score += gain;
             let eaten_species = p1_result.last_eaten_species.unwrap_or(fish::FishSpecies::Normal);
@@ -342,7 +401,7 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
             ctx.p1_invincible = ctx.invincible_duration;
             ctx.p1_slow_timer = ctx.slow_duration;
             ctx.shake_timer += 0.5;
-            ctx.shake_intensity = 20.0;
+            ctx.shake_intensity = 32.0;
             ctx.player1_fish.apply_hurt_flash();
             play_sound(ctx, "snd_hurt");
             if ctx.p1_lives <= 0 { ctx.player1_fish.alpha = 0.3; }
@@ -351,7 +410,14 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
 
     // ── 玩家2 ──
     if ctx.p2_lives > 0 {
-        let p2_result = ctx.fishes.check_interact(ctx.player2_fish.pos, ctx.player2_fish.size);
+        let invincible = ctx.p2_rotate_timer > 0.0;
+        let eat_multiplier = if invincible { 10.0 } else { 1.0 };
+        let p2_result = ctx.fishes.check_interact_advanced(
+            ctx.player2_fish.pos,
+            ctx.player2_fish.size,
+            invincible,
+            eat_multiplier,
+        );
         if p2_result.eaten_count > 0 {
             ctx.player2_fish.size = (ctx.player2_fish.size + p2_result.last_eaten_size / ctx.player2_fish.size).min(ctx.player2_fish.max_size);
             let gain = (p2_result.eaten_count as f32 * 10.0 * p2_result.last_eaten_size / ctx.player2_fish.size) as i32;
@@ -365,7 +431,7 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
             ctx.p2_invincible = ctx.invincible_duration;
             ctx.p2_slow_timer = ctx.slow_duration;
             ctx.shake_timer += 0.5;
-            ctx.shake_intensity = 20.0;
+            ctx.shake_intensity = 32.0;
             ctx.player2_fish.apply_hurt_flash();
             play_sound(ctx, "snd_hurt");
             if ctx.p2_lives <= 0 { ctx.player2_fish.alpha = 0.3; }
@@ -393,6 +459,35 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
     }
     if ctx.p1_slow_timer > 0.0 { ctx.p1_slow_timer -= dt_f; }
     if ctx.p2_slow_timer > 0.0 { ctx.p2_slow_timer -= dt_f; }
+
+    // === 新增：旋转无敌计时器 ===
+    if ctx.p1_rotate_timer > 0.0 {
+        ctx.p1_rotate_timer -= dt_f;
+        ctx.player1_fish.rot += ctx.rotate_speed * dt_f;
+        // 金色闪烁特效
+        let blink = (ctx.p1_rotate_timer * 8.0) as i32 % 2 == 0;
+        if blink {
+            ctx.player1_fish.color = [1.0, 0.8, 0.0, 1.0];
+        } else {
+            ctx.player1_fish.color = [1.0, 1.0, 1.0, 1.0];
+        }
+        if ctx.p1_rotate_timer <= 0.0 {
+            ctx.player1_fish.reset_color();
+        }
+    }
+    if ctx.p2_rotate_timer > 0.0 {
+        ctx.p2_rotate_timer -= dt_f;
+        ctx.player2_fish.rot += ctx.rotate_speed * dt_f;
+        let blink = (ctx.p2_rotate_timer * 8.0) as i32 % 2 == 0;
+        if blink {
+            ctx.player2_fish.color = [1.0, 0.8, 0.0, 1.0];
+        } else {
+            ctx.player2_fish.color = [1.0, 1.0, 1.0, 1.0];
+        }
+        if ctx.p2_rotate_timer <= 0.0 {
+            ctx.player2_fish.reset_color();
+        }
+    }
 
     // 相机震动
     if ctx.shake_timer > 0.0 {
@@ -554,6 +649,36 @@ fn render_game_over(ctx: &mut AppContext) -> Result<()> {
     Ok(())
 }
 
+/// 调试帮助窗口（仅在 RJW_DEBUG=1 时显示）
+fn render_debug_help(ctx: &mut AppContext) -> Result<()> {
+    let layout = ctx.debug_help_layout.as_ref().unwrap();
+    let alpha = if ctx.debug_help_timer < 5.0 {
+        ctx.debug_help_timer / 5.0
+    } else {
+        1.0
+    };
+    let vp = ctx.camera.viewport_size;
+    let margin = 16.0;
+    // 左下角对齐
+    let pos = Vec2::new(-vp.x * 0.5 + margin, -vp.y * 0.5 + margin);
+    let content_size = layout.content_size;
+    let bg_padding = 6.0;
+    let bg_pos = pos + Vec2::new(-bg_padding, -bg_padding);
+    let bg_size = content_size + Vec2::splat(bg_padding) * 2.0;
+
+    ctx.shape_batch.add_rect_no_uv(bg_pos, bg_size, Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.7 * alpha]);
+    ctx.atlas_text.render_layout(
+        layout,
+        Vec2::ZERO,
+        Vec2::ZERO,
+        Transform2D::IDENTITY.move_by(pos),
+        [1.0, 1.0, 1.0, alpha],
+        -1.0,
+        &mut ctx.sprite_buf,
+    );
+    Ok(())
+}
+
 fn render_frame(ctx: &mut AppContext, dt: f64) -> Result<()> {
     ctx.gfx.clear_screen(&[0.1, 0.2, 0.4, 1.0]);
 
@@ -630,6 +755,17 @@ fn render_frame(ctx: &mut AppContext, dt: f64) -> Result<()> {
     ctx.sprite_batch.draw_buffer_and_clear(&ctx.gfx, &mut ctx.sprite_buf, |xform| (xform.pos, xform.scale, xform.rot));
 
     ctx.helper_window.render(dt as f32, ctx.camera.viewport_size, &mut ctx.atlas_text, &mut ctx.sprite_buf, &mut ctx.sprite_batch, &mut ctx.shape_batch, &ctx.gfx)?;
+
+    // 调试帮助窗口（仅在调试模式下显示）
+    if ctx.dbg_window && ctx.debug_help_timer > 0.0 {
+        render_debug_help(ctx)?;
+        ctx.shape_batch.set_mvp(&ctx.gfx, &mvp);
+        ctx.shape_batch.submit_and_draw(&ctx.gfx)?;
+        ctx.shape_batch.clear_batch();
+        ctx.atlas_text.upload(&ctx.gfx)?;
+        ctx.sprite_batch.set_mvp(&ctx.gfx, &mvp);
+        ctx.sprite_batch.draw_buffer_and_clear(&ctx.gfx, &mut ctx.sprite_buf, |xform| (xform.pos, xform.scale, xform.rot));
+    }
 
     ctx.gfx.present()?;
     Ok(())
@@ -719,6 +855,8 @@ impl App {
         // 可选：设置自动生成
         items.auto_spawn_enabled = true;
 
+        let dbg_window = if Ok("1".to_string()) == std::env::var("RJW_DEBUG") { true } else { false };
+
         let mut ctx = AppContext {
             window, driver, gfx, sprite_batch, shape_batch, camera, timer, sprite_buf, atlas_text,
             time_elapsed: 0.0, audio, sounds,
@@ -736,8 +874,28 @@ impl App {
             intro_played: false,
             helper_window,
             items,
-            dbg_window: if Ok("1".to_string()) == std::env::var("RJW_DEBUG") { true } else { false },
+            dbg_window,
+            p1_rotate_timer: 0.0,
+            p2_rotate_timer: 0.0,
+            rotate_duration: 15.0,
+            rotate_speed: 4.0 * std::f32::consts::PI,  // 每秒2圈
+            debug_help_timer: 10.0,
+            debug_help_layout: None,
         };
+
+        // 初始化调试帮助布局（仅在调试模式下）
+        if ctx.dbg_window {
+            let metrics = Metrics::new(16.0, 20.0);
+            let attrs = Attrs::new().family(cosmic_text::Family::Name("SimHei"));
+            let layout = ctx.atlas_text.layout_text(
+                include_str!("app/dbg_help.txt"),
+                metrics,
+                attrs,
+                &ctx.gfx.device,
+            )?;
+            ctx.debug_help_layout = Some(layout);
+        }
+
         ctx.restart();
         self.ctx = Some(ctx);
 
@@ -749,6 +907,7 @@ impl App {
             let size = ctx.window.inner_size();
             let size = (size.width, size.height);
             let dt = ctx.timer.pre_frame_and_get_delta_time();
+            let dt_f = dt as f32;
 
             // 开场音效
             if !ctx.intro_played {
@@ -757,7 +916,6 @@ impl App {
             }
 
             // 长按 R 5 秒重置（游戏进行中）
-            let dt_f = dt as f32;
             let ks_r = ctx.driver.keyboard().get_key_state(KeyCode::KeyR);
             if !ctx.game_over && ks_r.is_pressed() {
                 ctx.reset_hold_timer += dt_f;
@@ -772,6 +930,31 @@ impl App {
             if ctx.game_over {
                 let ks_ent = ctx.driver.keyboard().get_key_state(KeyCode::Enter);
                 if ks_r.is_down_true_edge() || ks_ent.is_down_true_edge() { ctx.restart(); }
+            }
+
+            // === 调试功能：按下 1 生成随机道具，按下 2 生成随机鱼 ===
+            if ctx.dbg_window {
+                let ks1 = ctx.driver.keyboard().get_key_state(KeyCode::Digit1);
+                if ks1.is_down_true_edge() {
+                    let item = items::Item::random_weighted();
+                    let view_w = ctx.camera.viewport_size.x;
+                    let view_h = ctx.camera.viewport_size.y;
+                    ctx.items.new_item(item, view_w, view_h);
+                    ctx.debug_help_timer = 10.0;
+                }
+
+                let ks2 = ctx.driver.keyboard().get_key_state(KeyCode::Digit2);
+                if ks2.is_down_true_edge() {
+                    if let Some(&species) = fastrand::choice(ALL_FISH_SPECIES) {
+                        ctx.fishes.spawn_one_of_species(species, &mut ctx.atlas_text, &ctx.gfx);
+                        ctx.debug_help_timer = 10.0;
+                    }
+                }
+            }
+
+            // 更新调试帮助计时器
+            if ctx.debug_help_timer > 0.0 {
+                ctx.debug_help_timer -= dt_f;
             }
 
             ctx.driver.if_window_size_dirty(|w, h| { ctx.gfx.on_resize(w, h)?; ctx.camera.viewport_size = Vec2::new(w as f32, h as f32); Ok(()) })?;

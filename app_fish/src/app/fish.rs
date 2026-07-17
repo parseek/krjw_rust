@@ -9,7 +9,7 @@ pub enum FishFacing {
 }
 
 /// 🐟 鱼种类
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub enum FishSpecies {
     Normal,     // 🐟 普通鱼
     Tropical,   // 🐠 热带鱼
@@ -23,6 +23,21 @@ pub enum FishSpecies {
     Turtle,     // 🐢 海龟
     WaterHawk,  // 🦅 鹰
 }
+
+/// 所有鱼种的切片（供外部随机选择使用）
+pub const ALL_FISH_SPECIES: &[FishSpecies] = &[
+    FishSpecies::Normal,
+    FishSpecies::Tropical,
+    FishSpecies::Puffer,
+    FishSpecies::Octopus,
+    FishSpecies::Whale,
+    FishSpecies::Shark,
+    FishSpecies::Dolphin,
+    FishSpecies::Crab,
+    FishSpecies::Lobster,
+    FishSpecies::Turtle,
+    FishSpecies::WaterHawk,
+];
 
 impl FishSpecies {
     pub fn emoji(&self) -> &'static str {
@@ -59,11 +74,11 @@ impl FishSpecies {
 
     pub fn size_range(&self) -> (f32, f32) {
         match self {
-            Self::Normal    => (6.0, 40.0),
-            Self::Tropical  => (5.0, 32.0),
+            Self::Normal    => (5.0, 32.0),
+            Self::Tropical  => (5.0, 28.0),
             Self::Puffer    => (24.0, 48.0),
             Self::Octopus   => (50.0, 72.0),
-            Self::Whale     => (60.0, 120.0),
+            Self::Whale     => (60.0, 180.0),
             Self::Shark     => (50.0, 100.0),
             Self::Dolphin   => (36.0, 72.0),
             Self::Crab      => (20.0, 36.0),
@@ -89,7 +104,6 @@ impl FishSpecies {
         }
     }
 
-    /// 该种类解锁所需的玩家大小阈值
     pub fn unlock_size(&self) -> f32 {
         match self {
             Self::Normal    => 0.0,
@@ -106,24 +120,22 @@ impl FishSpecies {
         }
     }
 
-    /// 该种类最大生成速率（条/秒），达到 unlock_size 后逐渐达到此值
     pub fn max_spawn_rate(&self) -> f32 {
         match self {
-            Self::Normal    => 0.3,
-            Self::Tropical  => 0.3,
-            Self::Puffer    => 0.3,
-            Self::Octopus   => 0.15,
-            Self::Whale     => 0.1,
-            Self::Shark     => 0.1,
-            Self::Dolphin   => 0.2,
-            Self::Crab      => 0.2,
-            Self::Lobster   => 0.1,
-            Self::Turtle    => 0.15,
-            Self::WaterHawk => 0.05,
+            Self::Normal    => 0.8,
+            Self::Tropical  => 0.8,
+            Self::Puffer    => 0.5,
+            Self::Octopus   => 0.45,
+            Self::Whale     => 0.4,
+            Self::Shark     => 0.4,
+            Self::Dolphin   => 0.35,
+            Self::Crab      => 0.35,
+            Self::Lobster   => 0.25,
+            Self::Turtle    => 0.25,
+            Self::WaterHawk => 0.15,
         }
     }
 
-    /// 被吃掉时的粒子颜色集合
     pub fn bitten_colors(&self) -> &[[f32; 3]] {
         match self {
             Self::Normal    => &[[0.6, 0.7, 0.9], [0.4, 0.5, 0.7], [0.8, 0.9, 1.0]],
@@ -146,7 +158,7 @@ impl FishSpecies {
 pub enum MovementPattern {
     HorizontalEntry { from_left: bool, speed: f32 },
     VerticalEntry { from_top: bool, speed: f32 },
-    Wave { speed: f32, amplitude: f32, frequency: f32, phase: f32, initial_x: f32, direction: f32 },
+    Wave { speed: f32, amplitude: f32, frequency: f32, phase: f32, direction: f32 },
     Linear { velocity: Vec2 },
     Stationary,
 }
@@ -157,7 +169,6 @@ const DISAPPEAR_DURATION: f32 = 1.0;
 /// 🐟 鱼
 pub struct Fish {
     pub species: FishSpecies,
-    pub shape: String,
     pub shape_layout: TextLayout,
     pub size: f32,
     pub max_size: f32,
@@ -168,28 +179,21 @@ pub struct Fish {
     pub movement: MovementPattern,
     pub origin: Vec2,
     pub eaten: bool,
-    /// 入场淡入剩余时间（秒）
     pub spawn_fade: f32,
-    /// 淡入总时长（秒）
     pub spawn_fade_duration: f32,
     pub rolling_speed: f32,
     pub rot: f32,
-    /// 消失淡出剩余时间（秒），Some 表示正在淡出，None 表示正常状态
     pub disappear: Option<f32>,
-    /// 存活年龄（秒），用于数量淘汰
     pub age: f32,
 }
 
 impl Fish {
-    /// 创建玩家控制的鱼
     pub fn new(size: f32, max_size: f32, shape: &str, atlas_text: &mut AtlasText, gfx: &graphic::d3d11::D3D11) -> Self {
         let max_size = max_size * 2.0;
         let shape_layout = atlas_text.layout_text(shape, Metrics::new(max_size, max_size), Attrs::new(), &gfx.device).unwrap();
-        let shape = shape.to_string();
         Self {
             species: FishSpecies::Normal,
             origin: FishSpecies::Normal.origin_ratio() * max_size,
-            shape,
             shape_layout,
             facing: FishFacing::Right,
             pos: Vec2::ZERO,
@@ -208,7 +212,6 @@ impl Fish {
         }
     }
 
-    /// 创建一条自动鱼
     pub fn new_random_with_species(view_w: f32, view_h: f32, species: FishSpecies, atlas_text: &mut AtlasText, gfx: &graphic::d3d11::D3D11) -> Self {
         use MovementPattern::*;
         let (min_s, max_s) = species.size_range();
@@ -223,7 +226,6 @@ impl Fish {
         let half_w = view_w * 0.5;
         let half_h = view_h * 0.5;
 
-        // 生成 movement、pos、facing 三元组
         let (pos, facing, movement) = if pattern_roll < 0.25 {
             let from_left = fastrand::f32() < 0.5;
             let y = (fastrand::f32() - 0.5) * view_h;
@@ -241,7 +243,7 @@ impl Fish {
             let y = (fastrand::f32() - 0.5) * view_h;
             let dir = if fastrand::f32() < 0.5 { 1.0 } else { -1.0 };
             let facing = if dir > 0.0 { FishFacing::Right } else { FishFacing::Left };
-            (Vec2::new(x, y), facing, Wave { speed: 30.0 + fastrand::f32() * 100.0, amplitude: 20.0 + fastrand::f32() * 60.0, frequency: 1.0 + fastrand::f32() * 3.0, phase: fastrand::f32() * 6.28, initial_x: x, direction: dir })
+            (Vec2::new(x, y), facing, Wave { speed: 30.0 + fastrand::f32() * 100.0, amplitude: 20.0 + fastrand::f32() * 60.0, frequency: 1.0 + fastrand::f32() * 3.0, phase: fastrand::f32() * 6.28, direction: dir })
         } else {
             let angle = fastrand::f32() * 6.28;
             let speed = 40.0 + fastrand::f32() * 120.0;
@@ -260,7 +262,6 @@ impl Fish {
         Self {
             species,
             origin: species.origin_ratio() * max_size,
-            shape: shape_str.to_string(),
             shape_layout,
             facing, pos, size, max_size,
             color: [color_r, color_g, color_b, 1.0],
@@ -276,23 +277,28 @@ impl Fish {
         }
     }
 
-    /// 开始消失淡出
     pub fn start_disappear(&mut self) {
         if self.disappear.is_none() && !self.eaten {
             self.disappear = Some(DISAPPEAR_DURATION);
         }
     }
 
-    /// 是否正在淡出
     pub fn is_disappearing(&self) -> bool {
         self.disappear.is_some()
     }
 
+    /// 旋转输入向量（用于旋转无敌模式）
+    pub fn rotate_input(&self, dx: f32, dy: f32) -> Vec2 {
+        let (sin, cos) = (self.rot * 0.02).sin_cos();
+        Vec2::new(
+            dx * cos - dy * sin,
+            dx * sin + dy * cos,
+        )
+    }
+
     pub fn update(&mut self, dt: f32, view_w: f32, view_h: f32) {
-        // 累加年龄
         self.age += dt;
 
-        // 更新消失计时器
         if let Some(d) = self.disappear {
             let new_d = d - dt;
             if new_d <= 0.0 {
@@ -303,12 +309,10 @@ impl Fish {
             }
         }
 
-        // 如果已标记为被吃或消失完成，不更新运动
         if self.eaten {
             return;
         }
 
-        // 入场淡入
         if self.spawn_fade > 0.0 {
             self.spawn_fade = (self.spawn_fade - dt).max(0.0);
             self.alpha = 1.0 - (self.spawn_fade / self.spawn_fade_duration);
@@ -325,7 +329,6 @@ impl Fish {
                 let dir = if *from_left { 1.0 } else { -1.0 };
                 self.pos.x += dir * *speed * dt;
                 self.facing = if *from_left { FishFacing::Right } else { FishFacing::Left };
-                // 超出边界触发淡出
                 if self.pos.x > half_w + self.size * 2.0 || self.pos.x < -half_w - self.size * 2.0 {
                     self.start_disappear();
                 }
@@ -337,7 +340,7 @@ impl Fish {
                     self.start_disappear();
                 }
             }
-            Wave { speed, amplitude, frequency, phase, initial_x: _, direction } => {
+            Wave { speed, amplitude, frequency, phase, direction } => {
                 self.pos.x += *direction * *speed * dt;
                 self.facing = if *direction > 0.0 { FishFacing::Right } else { FishFacing::Left };
                 let wave_offset = (*amplitude) * (self.pos.x * *frequency * 0.01 + *phase).sin();
@@ -367,6 +370,7 @@ impl Fish {
         }
     }
 
+    #[allow(unused)]
     pub fn get_collider(&self) -> Collider {
         Collider::Circle { radius: self.size * 0.6 }
     }
@@ -382,7 +386,6 @@ impl Fish {
         }
     }
 
-    /// 获取消失因子（0~1），用于淡出透明度
     pub fn disappear_factor(&self) -> f32 {
         if let Some(d) = self.disappear {
             (d / DISAPPEAR_DURATION).max(0.0).min(1.0)
@@ -396,9 +399,7 @@ impl Fish {
         let disappear_factor = self.disappear_factor();
         let final_alpha = self.alpha * disappear_factor;
         let final_color = [self.color[0], self.color[1], self.color[2], self.color[3] * final_alpha];
-        // 黑色阴影
         atlas_text.render_layout(&self.shape_layout, Vec2::ZERO, self.origin, self.get_transform().move_by(Vec2::new(5.0, 5.0)), [0.0, 0.0, 0.0, 0.3 * final_alpha], 0.0, sprite_buffer);
-        // 本体
         atlas_text.render_layout(&self.shape_layout, Vec2::ZERO, self.origin, self.get_transform(), final_color, 0.0, sprite_buffer);
     }
 

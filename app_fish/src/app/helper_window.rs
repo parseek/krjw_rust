@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use glam::Vec2;
-use krjw_engine::{AtlasText, ShapeBatch2D, Sprite2D, Sprite2DBuffer, Sprite2DObject, SpriteBatch2D, TextureInfoArced, Transform2D, atlas_text::TextLayout, cosmic_text::{self, Attrs, Metrics}, graphic};
+use krjw_engine::{AtlasText, ShapeBatch2D, Sprite2DBuffer, SpriteBatch2D, TextureInfoArced, Transform2D, atlas_text::TextLayout, cosmic_text::{self, Attrs, Metrics}, graphic};
 
 const HELP_TXT: &str = include_str!("help.txt");
 

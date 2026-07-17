@@ -3,14 +3,12 @@ use glam::Vec2;
 use krjw_engine::{AtlasText, ShapeBatch2D, Sprite2DBuffer, TextureInfoArced, Transform2D, graphic};
 use std::collections::HashMap;
 
-/// 自动鱼最大数量上限
 const MAX_FISH_COUNT: usize = 200;
 
 pub struct Fishes {
     pub fish_list: Vec<Fish>,
     view_w: f32,
     view_h: f32,
-    /// 游戏进度 = 两个玩家 size 的最大值
     pub progress_size: f32,
     spawn_acc: HashMap<FishSpecies, f32>,
 }
@@ -19,7 +17,6 @@ pub struct EatResult {
     pub eaten_count: usize,
     pub hit_by_big: bool,
     pub last_eaten_species: Option<FishSpecies>,
-    /// 最后被吃掉的鱼的大小（用于粒子缩放）
     pub last_eaten_size: f32,
 }
 
@@ -37,23 +34,37 @@ impl Fishes {
         let total = self.fish_list.len();
         let disappearing = self.fish_list.iter().filter(|f| f.is_disappearing()).count();
         let fading_in = self.fish_list.iter().filter(|f| f.spawn_fade > 0.0).count();
-        
-        let species_count: Vec<String> = self.spawn_acc.iter()
+        let eaten = self.fish_list.iter().filter(|f| f.eaten).count();
+
+        let species_acc: Vec<String> = self.spawn_acc.iter()
             .map(|(species, acc)| format!("{:?}:{:.2}", species, acc))
             .collect();
-        
+
+        let mut species_count = std::collections::BTreeMap::new();
+        for fish in &self.fish_list {
+            if !fish.eaten {
+                *species_count.entry(fish.species).or_insert(0) += 1;
+            }
+        }
+        let species_dist: Vec<String> = species_count.iter()
+            .map(|(species, count)| format!("{:?}:{}", species, count))
+            .collect();
+
         format!(
-            "鱼群状态:\n\
-            　总数: {} (淡入中: {}, 淡出中: {})\n\
-            　进度尺寸: {:.1}\n\
-            　生成累计: {}\n\
-            　各物种累计: {}",
+            "🐟 鱼群状态:\n\
+        ├─ 总数: {} (淡入中: {}, 淡出中: {}, 已标记移除: {})\n\
+        ├─ 进度尺寸: {:.1}\n\
+        ├─ 生成累计: {:.2}\n\
+        ├─ 各物种累计: {}\n\
+        └─ 当前分布: {}",
             total,
             fading_in,
             disappearing,
+            eaten,
             self.progress_size,
             self.spawn_acc.values().sum::<f32>(),
-            species_count.join(", ")
+            if species_acc.is_empty() { "无".to_string() } else { species_acc.join(", ") },
+            if species_dist.is_empty() { "无".to_string() } else { species_dist.join(", ") }
         )
     }
 
@@ -62,7 +73,6 @@ impl Fishes {
         self.view_h = h;
     }
 
-    /// 移除最旧的鱼（年龄最大），若已在淡出则直接标记移除，否则触发淡出
     fn remove_oldest(&mut self) {
         if self.fish_list.is_empty() { return; }
         let mut oldest_idx = 0;
@@ -75,7 +85,6 @@ impl Fishes {
         }
         let fish = &mut self.fish_list[oldest_idx];
         if fish.is_disappearing() {
-            // 已在淡出，直接标记移除
             fish.eaten = true;
         } else {
             fish.start_disappear();
@@ -83,7 +92,6 @@ impl Fishes {
     }
 
     pub fn spawn_one_of_species(&mut self, species: FishSpecies, atlas_text: &mut AtlasText, gfx: &graphic::d3d11::D3D11) {
-        // 确保不超出数量上限
         if self.fish_list.len() >= MAX_FISH_COUNT {
             self.remove_oldest();
         }
@@ -101,12 +109,10 @@ impl Fishes {
 
         for &species in ALL_SPECIES {
             let unlock = species.unlock_size();
-            // 如果进度未达到解锁尺寸，跳过
             if self.progress_size < unlock {
                 continue;
             }
 
-            // 从 unlock 到 unlock+25 线性提升到 max_spawn_rate
             let progress = ((self.progress_size - unlock) / 25.0).min(1.0);
             let rate = progress * species.max_spawn_rate();
 
@@ -132,7 +138,20 @@ impl Fishes {
         }
     }
 
+    /// 标准交互（原版，保留兼容）
+    #[allow(unused)]
     pub fn check_interact(&mut self, player_pos: Vec2, player_size: f32) -> EatResult {
+        self.check_interact_advanced(player_pos, player_size, false, 1.0)
+    }
+
+    /// 高级交互：支持无敌和可吃倍数
+    pub fn check_interact_advanced(
+        &mut self,
+        player_pos: Vec2,
+        player_size: f32,
+        invincible: bool,
+        eat_multiplier: f32,
+    ) -> EatResult {
         let player_radius = player_size * 0.6;
         let mut eaten_count = 0;
         let mut hit_by_big = false;
@@ -142,20 +161,20 @@ impl Fishes {
 
         for (i, fish) in self.fish_list.iter().enumerate() {
             if fish.eaten { continue; }
-            // 淡入中的鱼无法交互（既不能被吃也不能伤害玩家）
             if fish.spawn_fade > 0.0 { continue; }
-            // 正在淡出的鱼仍然可以交互（玩家可以吃掉它）
             let d = fish.pos - player_pos;
             let r_sum = fish.size * 0.6 + player_radius;
             if d.length_squared() > r_sum * r_sum { continue; }
 
-            if fish.size < player_size {
+            if fish.size < player_size * eat_multiplier {
                 last_species = Some(fish.species);
                 last_size = fish.size;
                 eaten_count += 1;
                 to_remove.push(i);
             } else {
-                hit_by_big = true;
+                if !invincible {
+                    hit_by_big = true;
+                }
             }
         }
 
@@ -171,7 +190,6 @@ impl Fishes {
         for fish in &mut self.fish_list {
             fish.update(dt, self.view_w, self.view_h);
         }
-        // 移除被吃或消失完成的鱼
         self.fish_list.retain(|fish| !fish.eaten);
     }
 
@@ -181,6 +199,7 @@ impl Fishes {
         }
     }
 
+    #[allow(unused)]
     pub fn dbg_add_shapes(&self, shape_batch: &mut ShapeBatch2D) {
         for fish in &self.fish_list {
             fish.dbg_add_shape(shape_batch);

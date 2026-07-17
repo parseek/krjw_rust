@@ -30,7 +30,7 @@ pub enum MovementPattern {
 }
 
 impl MovementPattern {
-    pub fn random_new(view_w: f32, view_h: f32) -> Self {
+    pub fn random_new() -> Self {
         let choice = fastrand::u32(0..5);
         match choice {
             0 => {
@@ -112,6 +112,8 @@ pub enum Item {
     SizeToLife,
     /// 交换两个玩家的大小
     SizeSwap,
+    /// 旋转无敌：触碰后玩家鱼旋转且无敌，可吃2倍大鱼
+    InvincibleRotate,
 }
 
 impl Item {
@@ -119,6 +121,7 @@ impl Item {
     pub const ALL: &'static [Item] = &[
         Item::SizeToLife,
         Item::SizeSwap,
+        Item::InvincibleRotate,
     ];
 
     // ─── 基础属性 ──────────────────────────────────────────────
@@ -127,20 +130,23 @@ impl Item {
         match self {
             Self::SizeToLife => "🩸",
             Self::SizeSwap => "🧾",
+            Self::InvincibleRotate => "🌀",
         }
     }
 
     pub fn max_render_size(&self) -> f32 {
         match self {
-            Self::SizeToLife => 40.0,
-            Self::SizeSwap => 40.0,
+            Self::SizeToLife => 60.0,
+            Self::SizeSwap => 60.0,
+            Self::InvincibleRotate => 60.0,
         }
     }
 
     pub fn random_size(&self) -> f32 {
         match self {
-            Self::SizeToLife => 15.0 + fastrand::f32() * 25.0,
-            Self::SizeSwap => 18.0 + fastrand::f32() * 22.0,
+            Self::SizeToLife => 35.0 + fastrand::f32() * 25.0,
+            Self::SizeSwap => 38.0 + fastrand::f32() * 22.0,
+            Self::InvincibleRotate => 34.0 + fastrand::f32() * 20.0,
         }
     }
 
@@ -148,6 +154,7 @@ impl Item {
         match self {
             Self::SizeToLife => [1.0, 0.2, 0.2, 1.0],
             Self::SizeSwap => [0.8, 0.8, 1.0, 1.0],
+            Self::InvincibleRotate => [0.8, 0.4, 1.0, 1.0], // 紫色
         }
     }
 
@@ -155,43 +162,42 @@ impl Item {
         match self {
             Self::SizeToLife => "Size→Life",
             Self::SizeSwap => "Size Swap",
+            Self::InvincibleRotate => "Rotate",
         }
     }
 
     // ─── 生成配置（权重、解锁条件、生成速率） ────────────────
 
-    /// 权重（用于随机选择，值越大出现概率越高）
     pub fn weight(&self) -> f32 {
         match self {
             Self::SizeToLife => 1.0,
             Self::SizeSwap => 0.8,
+            Self::InvincibleRotate => 0.6,
         }
     }
 
-    /// 解锁所需的最小玩家总大小（两个玩家之和）
     pub fn unlock_threshold(&self) -> f32 {
         match self {
-            Self::SizeToLife => 45.0,   
-            Self::SizeSwap => 45.0,
+            Self::SizeToLife => 42.0,
+            Self::SizeSwap => 42.0,
+            Self::InvincibleRotate => 40.0,
         }
     }
 
-    /// 基础生成速率（每秒生成次数，在解锁后全速）
     pub fn base_spawn_rate(&self) -> f32 {
         match self {
-            Self::SizeToLife => 0.02,
-            Self::SizeSwap => 0.02,
+            Self::SizeToLife => 0.05,
+            Self::SizeSwap => 0.05,
+            Self::InvincibleRotate => 0.05,
         }
     }
 
     // ─── 辅助方法 ──────────────────────────────────────────────
 
-    /// 获取所有物品的权重列表（顺序与 ALL 一致）
     pub fn all_weights() -> Vec<f32> {
         Self::ALL.iter().map(|item| item.weight()).collect()
     }
 
-    /// 带权重的随机选择（使用内部权重）
     pub fn random_weighted() -> Self {
         let weights = Self::all_weights();
         let total: f32 = weights.iter().sum();
@@ -205,7 +211,7 @@ impl Item {
         Self::ALL.last().unwrap().clone()
     }
 
-    /// 等概率随机（仅用于调试）
+    #[allow(unused)]
     pub fn random() -> Self {
         let idx = fastrand::usize(0..Self::ALL.len());
         Self::ALL[idx].clone()
@@ -227,9 +233,9 @@ pub struct Items {
     i_pltouched: Vec<bool>,
     i_hint: Vec<bool>,
     i_fade_elapsed: Vec<f32>,
-    i_age: Vec<f32>,                // 存活年龄（秒）
-    i_disappear: Vec<Option<f32>>,  // 消失淡出剩余时间（秒）
-    i_pending_remove: Vec<bool>,    // 待移除标记
+    i_age: Vec<f32>,
+    i_disappear: Vec<Option<f32>>,
+    i_pending_remove: Vec<bool>,
 
     // ---- 布局缓存 ----
     layouts: HashMap<Item, TextLayout>,
@@ -247,30 +253,56 @@ pub struct Items {
 impl Items {
     pub fn dbg_info(&self) -> String {
         let disappearing = self.i_disappear.iter().filter(|d| d.is_some()).count();
-        let fading_in = self.i_alpha.iter().filter(|&&a| a < 1.0).count();
-        
-        let type_count: Vec<String> = self.i_type.iter()
-            .fold(HashMap::new(), |mut acc, item| {
-                *acc.entry(item.name()).or_insert(0) += 1;
-                acc
-            })
+        let fading_in = self.i_alpha.iter().filter(|&&a| a < 1.0 && a > 0.0).count();
+        let pending_remove = self.i_pending_remove.iter().filter(|&&p| p).count();
+        let touched = self.i_pltouched.iter().filter(|&&t| t).count();
+
+        let mut type_count = std::collections::BTreeMap::new();
+        for i in 0..self.len {
+            if !self.i_pltouched[i] && !self.i_pending_remove[i] {
+                *type_count.entry(self.i_type[i].name()).or_insert(0) += 1;
+            }
+        }
+        let type_dist: Vec<String> = type_count
             .iter()
             .map(|(name, count)| format!("{}:{}", name, count))
             .collect();
-        
+
+        let mut total_rate = 0.0;
+        for item in Item::ALL {
+            if self.progress_size >= item.unlock_threshold() {
+                total_rate += item.base_spawn_rate();
+            }
+        }
+        let progress_factor = (self.progress_size / 100.0).min(1.0);
+        let effective_rate = total_rate * (0.2 + 0.8 * progress_factor);
+
         format!(
-            "物品状态:\n\
-            　总数: {} (淡入中: {}, 淡出中: {})\n\
-            　进度尺寸: {:.1}\n\
-            　生成计时器: {:.2}/{:.2}\n\
-            　各类型分布: {}",
+            "📦 物品状态:\n\
+        ├─ 总数: {} (淡入中: {}, 淡出中: {}, 待移除: {}, 已触碰: {})\n\
+        ├─ 进度尺寸: {:.1}\n\
+        ├─ 生成计时器: {:.2}/{:.2} (有效速率: {:.3}/s)\n\
+        ├─ 各类型分布: {}\n\
+        └─ 自动生成: {}",
             self.len,
             fading_in,
             disappearing,
+            pending_remove,
+            touched,
             self.progress_size,
             self.spawn_timer,
             self.spawn_interval,
-            type_count.join(", ")
+            effective_rate,
+            if type_dist.is_empty() {
+                "无".to_string()
+            } else {
+                type_dist.join(", ")
+            },
+            if self.auto_spawn_enabled {
+                "✅ 已启用"
+            } else {
+                "❌ 已禁用"
+            }
         )
     }
 
@@ -298,21 +330,20 @@ impl Items {
 
     // ─── 添加/移除 ──────────────────────────────────────────────
 
-    /// 开始消失淡出
     fn start_disappear(&mut self, index: usize) {
         if self.i_disappear[index].is_none() && !self.i_pltouched[index] {
             self.i_disappear[index] = Some(DISAPPEAR_DURATION);
         }
     }
 
-    /// 是否正在淡出
     fn is_disappearing(&self, index: usize) -> bool {
         self.i_disappear[index].is_some()
     }
 
-    /// 移除最旧的物品（年龄最大），若已在淡出则直接标记移除，否则触发淡出
     fn remove_oldest(&mut self) {
-        if self.len == 0 { return; }
+        if self.len == 0 {
+            return;
+        }
         let mut oldest_idx = 0;
         let mut max_age = 0.0;
         for i in 0..self.len {
@@ -329,13 +360,12 @@ impl Items {
     }
 
     pub fn new_item(&mut self, item: Item, view_w: f32, view_h: f32) {
-        // 确保不超出数量上限
         if self.len >= MAX_ITEMS_COUNT {
             self.remove_oldest();
         }
 
         let size = item.random_size();
-        let move_pattern = MovementPattern::random_new(view_w, view_h);
+        let move_pattern = MovementPattern::random_new();
         let pos = move_pattern.random_new_pos(view_w, view_h, size);
 
         self.i_pos.push(pos);
@@ -369,6 +399,7 @@ impl Items {
         self.len -= 1;
     }
 
+    #[allow(unused)]
     pub fn clear(&mut self) {
         self.i_pos.clear();
         self.i_alpha.clear();
@@ -432,7 +463,6 @@ impl Items {
     // ─── 运动更新 ──────────────────────────────────────────────
 
     pub fn process_motion_single(&mut self, index: usize, view_w: f32, view_h: f32, dt: f32) {
-        // 如果已标记移除，不再更新
         if self.i_pending_remove[index] || self.i_pltouched[index] {
             return;
         }
@@ -561,11 +591,9 @@ impl Items {
         let dt_f32 = dt as f32;
         const FADE_DURATION: f32 = 2.0;
 
-        // 1. 淡入 + 年龄累加 + 消失计时器更新
         for i in 0..self.len {
             self.i_age[i] += dt_f32;
 
-            // 更新消失计时器
             if let Some(d) = self.i_disappear[i] {
                 let new_d = d - dt_f32;
                 if new_d <= 0.0 {
@@ -576,7 +604,6 @@ impl Items {
                 }
             }
 
-            // 淡入
             if self.i_alpha[i] < 1.0 {
                 self.i_fade_elapsed[i] += dt_f32;
                 let progress = (self.i_fade_elapsed[i] / FADE_DURATION).min(1.0);
@@ -584,13 +611,8 @@ impl Items {
             }
         }
 
-        // 2. 运动更新
         self.process_motion(view_w, view_h, dt_f32);
-
-        // 3. 自动生成
         self.auto_spawn_step(dt_f32, view_w, view_h);
-
-        // 4. 清理被触碰或待移除的物品
         self.clear_finished(view_w, view_h);
     }
 
@@ -602,7 +624,6 @@ impl Items {
             .unwrap_or_else(|| panic!("Layout for {:?} not initialized", item))
     }
 
-    /// 获取消失因子（0~1）
     fn disappear_factor(&self, index: usize) -> f32 {
         if let Some(d) = self.i_disappear[index] {
             (d / DISAPPEAR_DURATION).max(0.0).min(1.0)
@@ -640,7 +661,6 @@ impl Items {
             let base_color = item_type.color();
             let color = [base_color[0], base_color[1], base_color[2], base_color[3] * final_alpha];
 
-            // 阴影
             atlas_text.render_layout(
                 layout,
                 Vec2::ZERO,
@@ -650,7 +670,6 @@ impl Items {
                 0.0,
                 sprite_buffer,
             );
-            // 本体
             atlas_text.render_layout(
                 layout,
                 Vec2::ZERO,
@@ -665,10 +684,12 @@ impl Items {
 
     // ─── 辅助 ──────────────────────────────────────────────────
 
+    #[allow(unused)]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    #[allow(unused)]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
