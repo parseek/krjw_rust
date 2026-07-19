@@ -13,6 +13,7 @@ use glam::Vec2;
 use krjw_engine::winit::{keyboard::KeyCode, window};
 use krjw_engine::image;
 use krjw_engine::cosmic_text;
+use krjw_engine::macros::*;
 
 use kira::{AudioManager, DefaultBackend, sound::static_sound::StaticSoundData};
 
@@ -286,8 +287,8 @@ impl App {
             let row = (i / w_count) as f32;
 
             tiles.push(Tile {
-                pos: Vec2::new((col - 1.5) * 150.0, (row - 2.5) * 150.0),
-                vel: Vec2::new(
+                pos: vecf!((col - 1.5) * 150.0, (row - 2.5) * 150.0),
+                vel: vecf!(
                     (i as f32 * 0.7).cos() * 200.0,
                     (i as f32 * 1.1).sin() * 200.0,
                 ),
@@ -295,13 +296,13 @@ impl App {
                 rot_vel: ((i as f32 * 0.5).cos() * 2.0).abs(),
                 scale: 0.5 + (i % 3) as f32 * 0.08,
                 sprite_rect: Sprite2D {
-                    origin_px: Vec2::new(cell_w / 2.0, cell_h / 2.0),
-                    size_px: Vec2::new(cell_w, cell_h),
-                    uv_tl_px: Vec2::new(cx, cy),
-                    uv_size_px: Vec2::new(cell_w, cell_h),
+                    origin_px: vecf!(cell_w / 2.0, cell_h / 2.0),
+                    size_px: vecf!(cell_w, cell_h),
+                    uv_tl_px: vecf!(cx, cy),
+                    uv_size_px: vecf!(cell_w, cell_h),
                 },
                 collider: Collider::Rect {
-                    half_size: Vec2::new(cell_w, cell_h) * 0.5,
+                    half_size: vecf!(cell_w, cell_h) * 0.5,
                 },
                 color: [
                     0.5 + (angle).sin() * 0.5,
@@ -315,7 +316,7 @@ impl App {
     }
 
     fn init_camera(window_size: (u32, u32)) -> Camera2D {
-        let ws = Vec2::new(window_size.0 as f32, window_size.1 as f32);
+        let ws = vecf!(window_size.0 as f32, window_size.1 as f32);
         Camera2D::new(ws)
     }
 
@@ -383,16 +384,16 @@ impl App {
         let (sin_rot, cos_rot) = camera.rotation.sin_cos();
         let mut move_dir = Vec2::ZERO;
         if key_pressed!(driver, KeyCode::KeyD) {
-            move_dir += Vec2::new(cos_rot, sin_rot);
+            move_dir += vecf!(cos_rot, sin_rot);
         }
         if key_pressed!(driver, KeyCode::KeyA) {
-            move_dir -= Vec2::new(cos_rot, sin_rot);
+            move_dir -= vecf!(cos_rot, sin_rot);
         }
         if key_pressed!(driver, KeyCode::KeyW) {
-            move_dir -= Vec2::new(-sin_rot, cos_rot);
+            move_dir -= vecf!(-sin_rot, cos_rot);
         }
         if key_pressed!(driver, KeyCode::KeyS) {
-            move_dir += Vec2::new(-sin_rot, cos_rot);
+            move_dir += vecf!(-sin_rot, cos_rot);
         }
         if move_dir.length_squared() > 0.0 {
             camera.position += move_dir.normalize() * move_speed * dt as f32;
@@ -400,7 +401,7 @@ impl App {
 
         camera.viewport_pos = Vec2::splat(0.0f32);
         let (w, h) = driver.window_size();
-        camera.viewport_size = Vec2::new(w as f32, h as f32);
+        camera.viewport_size = vecf!(w as f32, h as f32);
 
         camera.apply_viewport(&ctx.gfx);
     }
@@ -527,10 +528,10 @@ impl App {
         };
 
         for offset in [
-            Vec2::new(0.0, -1000.0),
-            Vec2::new(0.0, 1000.0),
-            Vec2::new(1000.0, 0.0),
-            Vec2::new(-1000.0, 0.0),
+            vecf!(0.0, -1000.0),
+            vecf!(0.0, 1000.0),
+            vecf!(1000.0, 0.0),
+            vecf!(-1000.0, 0.0),
         ] {
             let obj = Sprite2DObject {
                 transform: Transform2D::default().with_pos(offset),
@@ -580,7 +581,7 @@ impl App {
             // Shadow
             buf.push(&Sprite2DObject {
                 transform: Transform2D {
-                    pos: tile.pos + Vec2::new(5.0, 5.0),
+                    pos: tile.pos + vecf!(5.0, 5.0),
                     scale: Vec2::splat(tile.scale),
                     rot: tile.rot,
                 },
@@ -692,7 +693,7 @@ impl App {
         // Shadow
         ctx.atlas_text.render_layout_simple(
             &layout,
-            Vec2::new(10.0, 6.0),
+            vecf!(10.0, 6.0),
             [0.0, 0.0, 0.0, 0.75],
             0.0,
             &mut ctx.sprite_buf,
@@ -701,7 +702,7 @@ impl App {
         // Primary text
         ctx.atlas_text.render_layout_simple(
             &layout,
-            Vec2::new(8.0, 4.0),
+            vecf!(8.0, 4.0),
             [1.0, 1.0, 1.0, 1.0],
             0.0,
             &mut ctx.sprite_buf,
@@ -776,14 +777,14 @@ fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, spacing: f32, color: [f3
         return;
     }
 
-    let shadow = Vec2::new(5.0, 5.0);
+    let shadow = vecf!(5.0, 5.0);
 
     let mut x = min_x;
     while x <= max_x {
         for (off, col) in [(&shadow, [0.0, 0.0, 0.0, 0.2]), (&Vec2::ZERO, color)] {
             sb.add_square_line_no_uv(
-                Vec2::new(x, min_y) + *off,
-                Vec2::new(x, max_y) + *off,
+                vecf!(x, min_y) + *off,
+                vecf!(x, max_y) + *off,
                 10.0,
                 col,
             );
@@ -795,8 +796,8 @@ fn build_grid(sb: &mut ShapeBatch2D, camera: &Camera2D, spacing: f32, color: [f3
     while y <= max_y {
         for (off, col) in [(&shadow, [0.0, 0.0, 0.0, 0.2]), (&Vec2::ZERO, color)] {
             sb.add_square_line_no_uv(
-                Vec2::new(min_x, y) + *off,
-                Vec2::new(max_x, y) + *off,
+                vecf!(min_x, y) + *off,
+                vecf!(max_x, y) + *off,
                 10.0,
                 col,
             );
@@ -815,10 +816,10 @@ fn draw_collider_outline(sb: &mut ShapeBatch2D, inst: &ColliderInstance, color: 
                 *half_size
             };
             let local = [
-                Vec2::new(-h.x, -h.y),
-                Vec2::new(h.x, -h.y),
-                Vec2::new(h.x, h.y),
-                Vec2::new(-h.x, h.y),
+                vecf!(-h.x, -h.y),
+                vecf!(h.x, -h.y),
+                vecf!(h.x, h.y),
+                vecf!(-h.x, h.y),
             ];
             let mut world = [Vec2::ZERO; 4];
             for (i, lc) in local.iter().enumerate() {

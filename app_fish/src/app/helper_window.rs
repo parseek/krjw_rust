@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use glam::Vec2;
-use krjw_engine::{AtlasText, ShapeBatch2D, Sprite2DBuffer, SpriteBatch2D, TextureInfoArced, Transform2D, atlas_text::TextLayout, cosmic_text::{self, Attrs, Metrics}, graphic};
+use krjw_engine::{AtlasText, ShapeBatch2D, Sprite2DBuffer, SpriteBatch2D, TextureInfoArced, Transform2D, atlas_text::TextLayout, cosmic_text::{self, Attrs, Metrics}, graphic, macros::*};
 
 const HELP_TXT: &str = include_str!("help.txt");
 
@@ -25,12 +25,12 @@ impl HelperWindow {
             let alpha = if self.time < 5.0 { 1.0 } else {
                 (10.0 - self.time) / 5.0
             };
-            let tr = vp_size * Vec2::new(0.5, -0.5);
-            let offset = Vec2::new(-16.0, 16.0);
+            let tr = vp_size * vecf!(0.5, -0.5);
+            let offset = vecf!(-16.0, 16.0);
             let margin = 6.0_f32;
             let content_size = self.layout.content_size;
-            let text_pos = tr + offset + Vec2::new(-margin, margin) - Vec2::new(content_size.x, -10.0);
-            let frame_pos = tr + offset + Vec2::new(-margin, margin) * 2.0 - Vec2::new(content_size.x, 0.0);
+            let text_pos = tr + offset + vecf!(-margin, margin) - vecf!(content_size.x, -10.0);
+            let frame_pos = tr + offset + vecf!(-margin, margin) * 2.0 - vecf!(content_size.x, 0.0);
             let frame_size = content_size + Vec2::splat(margin) * 2.0;
             shape_batch.add_rect_no_uv(frame_pos, frame_size, Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.75 * alpha]);
             shape_batch.submit_and_draw(gfx)?;

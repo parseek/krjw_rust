@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use glam::Vec2;
 use kira::sound::static_sound::StaticSoundData;
 use krjw_engine::{cosmic_text::{Attrs, Metrics}, winit::keyboard::KeyCode, *};
+use krjw_engine::macros::*;
 use std::{collections::HashMap, io::Cursor, sync::mpsc::Receiver};
 
 mod grid_render;
@@ -187,7 +188,7 @@ impl AppContext {
             let sz = (4.0 + fastrand::f32() * 14.0) * size_scale.sqrt();
             self.particles.push(Particle {
                 pos,
-                vel: Vec2::new(angle.cos() * speed, angle.sin() * speed),
+                vel: vecf!(angle.cos() * speed, angle.sin() * speed),
                 lifetime: 0.4 + fastrand::f32() * 0.8,
                 max_lifetime: 1.2,
                 size: sz,
@@ -308,7 +309,7 @@ fn fish_proc_move(
     if driver.keyboard().get_key_state(KeyCode::ArrowUp).is_pressed()    { p2_dy -= 1.0; }
     
     if p2_dx != 0.0 || p2_dy != 0.0 {
-        let p2_input = Vec2::new(p2_dx, p2_dy).normalize_or_zero();
+        let p2_input = vecf!(p2_dx, p2_dy).normalize_or_zero();
         let p2_move = if p2_rotate_timer > 0.0 {
             player2_fish.rotate_input(p2_input.x, p2_input.y) * p2_mult
         } else {
@@ -328,7 +329,7 @@ fn fish_proc_move(
     if driver.keyboard().get_key_state(KeyCode::KeyW).is_pressed() { p1_dy -= 1.0; }
     
     if p1_dx != 0.0 || p1_dy != 0.0 {
-        let p1_input = Vec2::new(p1_dx, p1_dy).normalize_or_zero();
+        let p1_input = vecf!(p1_dx, p1_dy).normalize_or_zero();
         let p1_move = if p1_rotate_timer > 0.0 {
             player1_fish.rotate_input(p1_input.x, p1_input.y) * p1_mult
         } else {
@@ -494,7 +495,7 @@ fn process_event(ctx: &mut AppContext, dt: f64) -> Result<()> {
         ctx.shake_timer -= dt_f;
         let intensity = ctx.shake_intensity * (ctx.shake_timer / 0.3).max(0.0);
         let angle = fastrand::f32() * 6.28;
-        ctx.camera.position = Vec2::new(angle.cos() * intensity, angle.sin() * intensity);
+        ctx.camera.position = vecf!(angle.cos() * intensity, angle.sin() * intensity);
     } else {
         ctx.camera.position = Vec2::ZERO;
     }
@@ -540,8 +541,8 @@ prog: {}\
     let offset = 24.0;
     let margin = 8.0;
 
-    let box_tl = Vec2::new(-half_w + offset, -half_h + offset);
-    let txt_tl = Vec2::new(-half_w + offset + margin, -half_h + offset + margin);
+    let box_tl = vecf!(-half_w + offset, -half_h + offset);
+    let txt_tl = vecf!(-half_w + offset + margin, -half_h + offset + margin);
     let box_sz = content_layout.content_size + 2.0 * margin;
 
     ctx.shape_batch.add_rect_no_uv(box_tl, box_sz, Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.5]);
@@ -587,15 +588,15 @@ fn render_hud(ctx: &mut AppContext) -> Result<()> {
 
     // P1 行1: 左边界 pos = (-half_w+margin, line1_y), origin = (0,0) 即左上
     let p1_left = -half_w + margin;
-    let p1_pos = Vec2::new(p1_left, line1_y);
+    let p1_pos = vecf!(p1_left, line1_y);
     // P2 行1: 右边界 pos = (half_w-margin, line1_y), origin = (content_size.x, 0) 即右上
     let p2_right = half_w - margin;
-    let p2_pos = Vec2::new(p2_right, line1_y);
+    let p2_pos = vecf!(p2_right, line1_y);
 
     // P1 行2
-    let p1_score_pos = Vec2::new(p1_left, line2_y);
+    let p1_score_pos = vecf!(p1_left, line2_y);
     // P2 行2
-    let p2_score_pos = Vec2::new(p2_right, line2_y);
+    let p2_score_pos = vecf!(p2_right, line2_y);
 
     let bg_padding = 5.0;
     let bg_h = p1_layout.content_size.y + bg_padding * 2.0;
@@ -606,21 +607,21 @@ fn render_hud(ctx: &mut AppContext) -> Result<()> {
     let bg_w2s = p2_s_layout.content_size.x + bg_padding * 2.0;
 
     // P1 行1 背景（左上对齐 p1_pos - padding）
-    ctx.shape_batch.add_rect_no_uv(p1_pos + Vec2::new(-bg_padding, -bg_padding), Vec2::new(bg_w1, bg_h), Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.6]);
+    ctx.shape_batch.add_rect_no_uv(p1_pos + vecf!(-bg_padding, -bg_padding), vecf!(bg_w1, bg_h), Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.6]);
     // P2 行1 背景（右上对齐 p2_pos - padding）
-    ctx.shape_batch.add_rect_no_uv(p2_pos + Vec2::new(bg_padding, -bg_padding), Vec2::new(bg_w2, bg_h), Vec2::new(bg_w2, 0.0), 0.0, [0.0, 0.0, 0.0, 0.6]);
+    ctx.shape_batch.add_rect_no_uv(p2_pos + vecf!(bg_padding, -bg_padding), vecf!(bg_w2, bg_h), vecf!(bg_w2, 0.0), 0.0, [0.0, 0.0, 0.0, 0.6]);
     // P1 行2 背景
-    ctx.shape_batch.add_rect_no_uv(p1_score_pos + Vec2::new(-bg_padding, -bg_padding), Vec2::new(bg_w1s, bg_h2), Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.6]);
+    ctx.shape_batch.add_rect_no_uv(p1_score_pos + vecf!(-bg_padding, -bg_padding), vecf!(bg_w1s, bg_h2), Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.6]);
     // P2 行2 背景（右上对齐）
-    ctx.shape_batch.add_rect_no_uv(p2_score_pos + Vec2::new(bg_padding, -bg_padding), Vec2::new(bg_w2s, bg_h2), Vec2::new(bg_w2s, 0.0), 0.0, [0.0, 0.0, 0.0, 0.6]);
+    ctx.shape_batch.add_rect_no_uv(p2_score_pos + vecf!(bg_padding, -bg_padding), vecf!(bg_w2s, bg_h2), vecf!(bg_w2s, 0.0), 0.0, [0.0, 0.0, 0.0, 0.6]);
 
     let text_color = [1.0, 1.0, 1.0, 1.0];
     // P1 文字：左上对齐
     ctx.atlas_text.render_layout(&p1_layout, p1_pos, Vec2::ZERO, Transform2D::IDENTITY, text_color, 1.0, &mut ctx.sprite_buf);
     ctx.atlas_text.render_layout(&p1_s_layout, p1_score_pos, Vec2::ZERO, Transform2D::IDENTITY, [1.0, 1.0, 0.0, 1.0], 1.0, &mut ctx.sprite_buf);
     // P2 文字：用 content_size 右对齐（右上角对齐）
-    ctx.atlas_text.render_layout(&p2_layout, p2_pos, Vec2::new(p2_layout.content_size.x, 0.0), Transform2D::IDENTITY, text_color, 1.0, &mut ctx.sprite_buf);
-    ctx.atlas_text.render_layout(&p2_s_layout, p2_score_pos, Vec2::new(p2_s_layout.content_size.x, 0.0), Transform2D::IDENTITY, [1.0, 1.0, 0.0, 1.0], 1.0, &mut ctx.sprite_buf);
+    ctx.atlas_text.render_layout(&p2_layout, p2_pos, vecf!(p2_layout.content_size.x, 0.0), Transform2D::IDENTITY, text_color, 1.0, &mut ctx.sprite_buf);
+    ctx.atlas_text.render_layout(&p2_s_layout, p2_score_pos, vecf!(p2_s_layout.content_size.x, 0.0), Transform2D::IDENTITY, [1.0, 1.0, 0.0, 1.0], 1.0, &mut ctx.sprite_buf);
 
     if ctx.dbg_window { 
         render_dbg_hud(ctx)?;
@@ -631,20 +632,20 @@ fn render_hud(ctx: &mut AppContext) -> Result<()> {
 
 /// 游戏结束画面
 fn render_game_over(ctx: &mut AppContext) -> Result<()> {
-    let size_v = Vec2::new(ctx.camera.viewport_size.x, ctx.camera.viewport_size.y);
-    ctx.shape_batch.add_rect_no_uv(Vec2::new(0.0, 0.0), size_v*2.0, size_v, 0.0, [0.0, 0.0, 0.0, 0.5]);
+    let size_v = vecf!(ctx.camera.viewport_size.x, ctx.camera.viewport_size.y);
+    ctx.shape_batch.add_rect_no_uv(vecf!(0.0, 0.0), size_v*2.0, size_v, 0.0, [0.0, 0.0, 0.0, 0.5]);
 
     // 最终分数 — 居中显示
     let final_text = format!("{}  |  P1: {}分  P2: {}分", ctx.winner_text, ctx.p1_score, ctx.p2_score);
     let win_metrics = Metrics::new(40.0, 40.0);
     let win_layout = ctx.atlas_text.layout_text(&final_text, win_metrics, Attrs::new(), &ctx.gfx.device).unwrap();
     let win_origin = win_layout.content_size * 0.5;
-    ctx.atlas_text.render_layout(&win_layout, Vec2::new(0.0, 0.0), win_origin, Transform2D::IDENTITY, [1.0; 4], 2.0, &mut ctx.sprite_buf);
+    ctx.atlas_text.render_layout(&win_layout, vecf!(0.0, 0.0), win_origin, Transform2D::IDENTITY, [1.0; 4], 2.0, &mut ctx.sprite_buf);
 
     let hint_metrics = Metrics::new(20.0, 20.0);
     let hint_layout = ctx.atlas_text.layout_text("按 R 或 Enter 重新开始", hint_metrics, Attrs::new(), &ctx.gfx.device).unwrap();
     let hint_origin = hint_layout.content_size * 0.5;
-    ctx.atlas_text.render_layout(&hint_layout, Vec2::new(0.0, -50.0), hint_origin, Transform2D::IDENTITY, [1.0; 4], 2.0, &mut ctx.sprite_buf);
+    ctx.atlas_text.render_layout(&hint_layout, vecf!(0.0, -50.0), hint_origin, Transform2D::IDENTITY, [1.0; 4], 2.0, &mut ctx.sprite_buf);
 
     Ok(())
 }
@@ -660,10 +661,10 @@ fn render_debug_help(ctx: &mut AppContext) -> Result<()> {
     let vp = ctx.camera.viewport_size;
     let margin = 16.0;
     // 左下角对齐
-    let pos = Vec2::new(-vp.x * 0.5 + margin, -vp.y * 0.5 + margin);
+    let pos = vecf!(-vp.x * 0.5 + margin, -vp.y * 0.5 + margin);
     let content_size = layout.content_size;
     let bg_padding = 6.0;
-    let bg_pos = pos + Vec2::new(-bg_padding, -bg_padding);
+    let bg_pos = pos + vecf!(-bg_padding, -bg_padding);
     let bg_size = content_size + Vec2::splat(bg_padding) * 2.0;
 
     ctx.shape_batch.add_rect_no_uv(bg_pos, bg_size, Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.7 * alpha]);
@@ -734,13 +735,13 @@ fn render_frame(ctx: &mut AppContext, dt: f64) -> Result<()> {
         let margin = 10.0;
         let y_offset = 8.0;
         // 屏幕左上角（origin_px=ZERO = 左上）
-        let bar_pos = Vec2::new(-half_w + margin, -half_h + y_offset);
-        ctx.shape_batch.add_rect_no_uv(bar_pos, Vec2::new(bar_w, bar_h), Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.6]);
-        ctx.shape_batch.add_rect_no_uv(bar_pos + Vec2::new(2.0, 2.0), Vec2::new((bar_w - 4.0) * progress, bar_h - 4.0), Vec2::ZERO, 0.0, [0.8, 0.2, 0.2, 0.9]);
+        let bar_pos = vecf!(-half_w + margin, -half_h + y_offset);
+        ctx.shape_batch.add_rect_no_uv(bar_pos, vecf!(bar_w, bar_h), Vec2::ZERO, 0.0, [0.0, 0.0, 0.0, 0.6]);
+        ctx.shape_batch.add_rect_no_uv(bar_pos + vecf!(2.0, 2.0), vecf!((bar_w - 4.0) * progress, bar_h - 4.0), Vec2::ZERO, 0.0, [0.8, 0.2, 0.2, 0.9]);
         let hint = "松开取消重置".to_string();
         let hint_metrics = Metrics::new(14.0, 14.0);
         let hint_layout = ctx.atlas_text.layout_text(&hint, hint_metrics, Attrs::new(), &ctx.gfx.device).unwrap();
-        ctx.atlas_text.render_layout(&hint_layout, bar_pos + Vec2::new(0.0, bar_h + 2.0), Vec2::ZERO, Transform2D::IDENTITY, [1.0, 1.0, 1.0, 1.0], 2.0, &mut ctx.sprite_buf);
+        ctx.atlas_text.render_layout(&hint_layout, bar_pos + vecf!(0.0, bar_h + 2.0), Vec2::ZERO, Transform2D::IDENTITY, [1.0, 1.0, 1.0, 1.0], 2.0, &mut ctx.sprite_buf);
     }
 
     if ctx.game_over { render_game_over(ctx)?; }
@@ -832,7 +833,7 @@ impl App {
         let sprite_batch = SpriteBatch2D::new(&gfx.device, 2048, &gfx.states.vs_puc_m_2d, &gfx.states.ps_tex_rgba_2d, &gfx.states.input_layout_puc)?;
         let shape_batch = ShapeBatch2D::new(&gfx.device, 4096, &gfx.states.vs_puc_m_2d, &gfx.states.ps_solid_2d, &gfx.states.input_layout_puc)?;
 
-        let camera = Camera2D::new(Vec2::new(size.width as f32, size.height as f32));
+        let camera = Camera2D::new(vecf!(size.width as f32, size.height as f32));
         let timer = Timer::default();
         let sprite_buf = Sprite2DBuffer::default();
         let mut atlas_text = AtlasText::new(&gfx.device, -50.0, 12000.0).context("AtlasText::new failed")?;
@@ -957,7 +958,7 @@ impl App {
                 ctx.debug_help_timer -= dt_f;
             }
 
-            ctx.driver.if_window_size_dirty(|w, h| { ctx.gfx.on_resize(w, h)?; ctx.camera.viewport_size = Vec2::new(w as f32, h as f32); Ok(()) })?;
+            ctx.driver.if_window_size_dirty(|w, h| { ctx.gfx.on_resize(w, h)?; ctx.camera.viewport_size = vecf!(w as f32, h as f32); Ok(()) })?;
 
             process_event(ctx, dt)?;
 

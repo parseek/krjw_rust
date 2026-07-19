@@ -17,6 +17,7 @@ use krjw_engine::{
     graphic::d3d11::sprite_batch_2d::SpriteBatch2D,
     winit::keyboard::KeyCode,
     winit::window::Window,
+    macros::*,
 };
 
 /// Number of bouncing balls.
@@ -62,8 +63,8 @@ impl App {
             let angle = i as f32 * 137.508_f32.to_radians(); // golden angle
             let radius = 200.0 + rng.next() * 300.0;
             balls.push(Ball {
-                pos: Vec2::new(angle.cos() * radius, angle.sin() * radius),
-                vel: Vec2::new(rng.next() * 400.0 - 200.0, rng.next() * 400.0 - 200.0),
+                pos: vecf!(angle.cos() * radius, angle.sin() * radius),
+                vel: vecf!(rng.next() * 400.0 - 200.0, rng.next() * 400.0 - 200.0),
                 color: hsv_to_rgb(i as f32 * 0.618, 0.8, 1.0),
                 radius: BALL_RADIUS + rng.next() * 8.0,
             });
@@ -97,7 +98,7 @@ impl App {
             &gfx.states.vs_puc_m_2d, &gfx.states.ps_solid_2d,
             &gfx.states.input_layout_puc,
         )?;
-        let camera = Camera2D::new(Vec2::new(size.width as f32, size.height as f32));
+        let camera = Camera2D::new(vecf!(size.width as f32, size.height as f32));
 
         self.ctx = Some(AppContext { window, gfx, batch, shape_batch, camera });
 
@@ -115,7 +116,7 @@ impl App {
             driver.if_window_size_dirty( |w,h|{
                 if let Some(ctx) = self.ctx.as_mut() {
                     ctx.gfx.on_resize(w, h)?;
-                    ctx.camera.viewport_size = Vec2::new(w as f32, h as f32);
+                    ctx.camera.viewport_size = vecf!(w as f32, h as f32);
                 }
                 Ok(())
             })?;
@@ -166,7 +167,7 @@ impl App {
 
         camera.viewport_pos = Vec2::ZERO;
         let (w, h) = driver.window_size();
-        camera.viewport_size = Vec2::new(w as f32, h as f32);
+        camera.viewport_size = vecf!(w as f32, h as f32);
         camera.apply_viewport(&ctx.gfx);
 
         // Toggle attract / explode
@@ -179,8 +180,8 @@ impl App {
             for (i, ball) in self.balls.iter_mut().enumerate() {
                 let angle = i as f32 * 137.508_f32.to_radians();
                 let radius = 200.0 + rng.next() * 300.0;
-                ball.pos = Vec2::new(angle.cos() * radius, angle.sin() * radius);
-                ball.vel = Vec2::new(rng.next() * 400.0 - 200.0, rng.next() * 400.0 - 200.0);
+                ball.pos = vecf!(angle.cos() * radius, angle.sin() * radius);
+                ball.vel = vecf!(rng.next() * 400.0 - 200.0, rng.next() * 400.0 - 200.0);
             }
         }
     }
@@ -288,13 +289,13 @@ impl App {
         // ── Draw crosshair at mouse ──
         let cross_size = 15.0 * camera.zoom.x.max(camera.zoom.y);
         sb.add_square_line_no_uv(
-            world_mouse + Vec2::new(-cross_size, 0.0),
-            world_mouse + Vec2::new(cross_size, 0.0),
+            world_mouse + vecf!(-cross_size, 0.0),
+            world_mouse + vecf!(cross_size, 0.0),
             2.0, [1.0, 1.0, 1.0, 0.5],
         );
         sb.add_square_line_no_uv(
-            world_mouse + Vec2::new(0.0, -cross_size),
-            world_mouse + Vec2::new(0.0, cross_size),
+            world_mouse + vecf!(0.0, -cross_size),
+            world_mouse + vecf!(0.0, cross_size),
             2.0, [1.0, 1.0, 1.0, 0.5],
         );
         sb.set_mvp(gfx, &vp);
@@ -323,13 +324,13 @@ fn draw_grid(sb: &mut ShapeBatch2D, camera: &Camera2D) {
     let mut count = 0usize;
     let mut x = min_x;
     while x <= max_x && count < 200 {
-        sb.add_square_line_no_uv(Vec2::new(x, min_y), Vec2::new(x, max_y), 1.0, [0.2, 0.2, 0.3, 0.5]);
+        sb.add_square_line_no_uv(vecf!(x, min_y), vecf!(x, max_y), 1.0, [0.2, 0.2, 0.3, 0.5]);
         x += spacing;
         count += 1;
     }
     let mut y = min_y;
     while y <= max_y && count < 400 {
-        sb.add_square_line_no_uv(Vec2::new(min_x, y), Vec2::new(max_x, y), 1.0, [0.2, 0.2, 0.3, 0.5]);
+        sb.add_square_line_no_uv(vecf!(min_x, y), vecf!(max_x, y), 1.0, [0.2, 0.2, 0.3, 0.5]);
         y += spacing;
         count += 1;
     }

@@ -23,6 +23,8 @@ pub mod collider;
 pub mod atlas_text;
 #[allow(unused)]
 pub mod timer;
+#[allow(unused)]
+pub mod macros;
 
 // ── Re-exports ─────────────────────────────────────────────
 

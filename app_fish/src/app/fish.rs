@@ -1,5 +1,5 @@
 use glam::Vec2;
-use krjw_engine::{AtlasText, Collider, ShapeBatch2D, Sprite2DBuffer, TextureInfoArced, Transform2D, atlas_text::TextLayout, cosmic_text::{Attrs, Metrics}, graphic};
+use krjw_engine::{AtlasText, Collider, ShapeBatch2D, Sprite2DBuffer, TextureInfoArced, Transform2D, atlas_text::TextLayout, cosmic_text::{Attrs, Metrics}, graphic, macros::*};
 
 /// 鱼朝向
 #[derive(Clone, Copy, PartialEq)]
@@ -90,17 +90,17 @@ impl FishSpecies {
 
     pub fn origin_ratio(&self) -> Vec2 {
         match self {
-            Self::Normal    => Vec2::new(0.625, 0.375),
-            Self::Tropical  => Vec2::new(0.625, 0.370),
-            Self::Puffer    => Vec2::new(0.625, 0.390),
-            Self::Octopus   => Vec2::new(0.600, 0.350),
-            Self::Whale     => Vec2::new(0.550, 0.375),
-            Self::Shark     => Vec2::new(0.560, 0.375),
-            Self::Dolphin   => Vec2::new(0.625, 0.370),
-            Self::Crab      => Vec2::new(0.625, 0.380),
-            Self::Lobster   => Vec2::new(0.600, 0.360),
-            Self::Turtle    => Vec2::new(0.625, 0.370),
-            Self::WaterHawk => Vec2::new(0.625, 0.320),
+            Self::Normal    => vecf!(0.625, 0.375),
+            Self::Tropical  => vecf!(0.625, 0.370),
+            Self::Puffer    => vecf!(0.625, 0.390),
+            Self::Octopus   => vecf!(0.600, 0.350),
+            Self::Whale     => vecf!(0.550, 0.375),
+            Self::Shark     => vecf!(0.560, 0.375),
+            Self::Dolphin   => vecf!(0.625, 0.370),
+            Self::Crab      => vecf!(0.625, 0.380),
+            Self::Lobster   => vecf!(0.600, 0.360),
+            Self::Turtle    => vecf!(0.625, 0.370),
+            Self::WaterHawk => vecf!(0.625, 0.320),
         }
     }
 
@@ -231,27 +231,27 @@ impl Fish {
             let y = (fastrand::f32() - 0.5) * view_h;
             let x = if from_left { -half_w - size } else { half_w + size };
             let facing = if from_left { FishFacing::Right } else { FishFacing::Left };
-            (Vec2::new(x, y), facing, HorizontalEntry { from_left, speed: 50.0 + fastrand::f32() * 150.0 })
+            (vecf!(x, y), facing, HorizontalEntry { from_left, speed: 50.0 + fastrand::f32() * 150.0 })
         } else if pattern_roll < 0.45 {
             let from_top = fastrand::f32() < 0.5;
             let x = (fastrand::f32() - 0.5) * view_w;
             let y = if from_top { -half_h - size } else { half_h + size };
             let facing = if fastrand::f32() < 0.5 { FishFacing::Left } else { FishFacing::Right };
-            (Vec2::new(x, y), facing, VerticalEntry { from_top, speed: 40.0 + fastrand::f32() * 120.0 })
+            (vecf!(x, y), facing, VerticalEntry { from_top, speed: 40.0 + fastrand::f32() * 120.0 })
         } else if pattern_roll < 0.80 {
             let x = (fastrand::f32() - 0.5) * view_w;
             let y = (fastrand::f32() - 0.5) * view_h;
             let dir = if fastrand::f32() < 0.5 { 1.0 } else { -1.0 };
             let facing = if dir > 0.0 { FishFacing::Right } else { FishFacing::Left };
-            (Vec2::new(x, y), facing, Wave { speed: 30.0 + fastrand::f32() * 100.0, amplitude: 20.0 + fastrand::f32() * 60.0, frequency: 1.0 + fastrand::f32() * 3.0, phase: fastrand::f32() * 6.28, direction: dir })
+            (vecf!(x, y), facing, Wave { speed: 30.0 + fastrand::f32() * 100.0, amplitude: 20.0 + fastrand::f32() * 60.0, frequency: 1.0 + fastrand::f32() * 3.0, phase: fastrand::f32() * 6.28, direction: dir })
         } else {
             let angle = fastrand::f32() * 6.28;
             let speed = 40.0 + fastrand::f32() * 120.0;
-            let vel = Vec2::new(angle.cos() * speed, angle.sin() * speed);
+            let vel = vecf!(angle.cos() * speed, angle.sin() * speed);
             let facing = if vel.x > 0.0 { FishFacing::Right } else { FishFacing::Left };
             let x = (fastrand::f32() - 0.5) * view_w;
             let y = (fastrand::f32() - 0.5) * view_h;
-            (Vec2::new(x, y), facing, Linear { velocity: vel })
+            (vecf!(x, y), facing, Linear { velocity: vel })
         };
 
         let shape_str = species.emoji();
@@ -290,7 +290,7 @@ impl Fish {
     /// 旋转输入向量（用于旋转无敌模式）
     pub fn rotate_input(&self, dx: f32, dy: f32) -> Vec2 {
         let (sin, cos) = (self.rot * 0.02).sin_cos();
-        Vec2::new(
+        vecf!(
             dx * cos - dy * sin,
             dx * sin + dy * cos,
         )
@@ -380,7 +380,7 @@ impl Fish {
             pos: self.pos,
             scale: match self.facing {
                 FishFacing::Left => Vec2::ONE,
-                FishFacing::Right => Vec2::new(-1.0, 1.0),
+                FishFacing::Right => vecf!(-1.0, 1.0),
             } * self.size / self.max_size * 2.0,
             rot: self.rot,
         }
@@ -399,7 +399,7 @@ impl Fish {
         let disappear_factor = self.disappear_factor();
         let final_alpha = self.alpha * disappear_factor;
         let final_color = [self.color[0], self.color[1], self.color[2], self.color[3] * final_alpha];
-        atlas_text.render_layout(&self.shape_layout, Vec2::ZERO, self.origin, self.get_transform().with_move_by(Vec2::new(5.0, 5.0)), [0.0, 0.0, 0.0, 0.3 * final_alpha], 0.0, sprite_buffer);
+        atlas_text.render_layout(&self.shape_layout, Vec2::ZERO, self.origin, self.get_transform().with_move_by(vecf!(5.0, 5.0)), [0.0, 0.0, 0.0, 0.3 * final_alpha], 0.0, sprite_buffer);
         atlas_text.render_layout(&self.shape_layout, Vec2::ZERO, self.origin, self.get_transform(), final_color, 0.0, sprite_buffer);
     }
 

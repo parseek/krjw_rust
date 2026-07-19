@@ -3,6 +3,7 @@ use krjw_engine::{
     atlas_text::TextLayout,
     cosmic_text::{Attrs, Metrics},
     graphic, AtlasText, Sprite2DBuffer, TextureInfoArced, Transform2D,
+    macros::*
 };
 use std::collections::HashMap;
 
@@ -60,7 +61,7 @@ impl MovementPattern {
             3 => {
                 let angle = fastrand::f32() * 6.28;
                 let spd = 40.0 + fastrand::f32() * 120.0;
-                let velocity = Vec2::new(angle.cos() * spd, angle.sin() * spd);
+                let velocity = vecf!(angle.cos() * spd, angle.sin() * spd);
                 Self::Linear { velocity }
             }
             _ => Self::Stationary,
@@ -75,29 +76,29 @@ impl MovementPattern {
             Self::HorizontalEntry { from_left, .. } => {
                 let x = if *from_left { -half_w - size } else { half_w + size };
                 let y = (fastrand::f32() - 0.5) * view_h;
-                Vec2::new(x, y)
+                vecf!(x, y)
             }
             Self::VerticalEntry { from_top, .. } => {
                 let y = if *from_top { -half_h - size } else { half_h + size };
                 let x = (fastrand::f32() - 0.5) * view_w;
-                Vec2::new(x, y)
+                vecf!(x, y)
             }
             Self::Wave { direction, .. } => {
                 let x = if *direction > 0.0 { -half_w - size } else { half_w + size };
                 let y = (fastrand::f32() - 0.5) * view_h;
-                Vec2::new(x, y)
+                vecf!(x, y)
             }
             Self::Linear { .. } => {
                 let edge = fastrand::u32(0..4);
                 match edge {
-                    0 => Vec2::new(-half_w - size, (fastrand::f32() - 0.5) * view_h),
-                    1 => Vec2::new(half_w + size, (fastrand::f32() - 0.5) * view_h),
-                    2 => Vec2::new((fastrand::f32() - 0.5) * view_w, -half_h - size),
-                    _ => Vec2::new((fastrand::f32() - 0.5) * view_w, half_h + size),
+                    0 => vecf!(-half_w - size, (fastrand::f32() - 0.5) * view_h),
+                    1 => vecf!(half_w + size, (fastrand::f32() - 0.5) * view_h),
+                    2 => vecf!((fastrand::f32() - 0.5) * view_w, -half_h - size),
+                    _ => vecf!((fastrand::f32() - 0.5) * view_w, half_h + size),
                 }
             }
             Self::Stationary => {
-                Vec2::new((fastrand::f32() - 0.5) * view_w, (fastrand::f32() - 0.5) * view_h)
+                vecf!((fastrand::f32() - 0.5) * view_w, (fastrand::f32() - 0.5) * view_h)
             }
         }
     }
@@ -653,11 +654,11 @@ impl Items {
             let scale = size / layout_render_size;
             let transform = Transform2D {
                 pos,
-                scale: Vec2::new(scale, scale),
+                scale: vecf!(scale, scale),
                 rot: 0.0,
             };
 
-            let origin = Vec2::new(layout_render_size * 0.5, layout_render_size * 0.5);
+            let origin = vecf!(layout_render_size * 0.5, layout_render_size * 0.5);
             let base_color = item_type.color();
             let color = [base_color[0], base_color[1], base_color[2], base_color[3] * final_alpha];
 
@@ -665,7 +666,7 @@ impl Items {
                 layout,
                 Vec2::ZERO,
                 origin,
-                transform. with_move_by(Vec2::new(5.0, 5.0)),
+                transform. with_move_by(vecf!(5.0, 5.0)),
                 [0.0, 0.0, 0.0, 0.5 * final_alpha],
                 0.0,
                 sprite_buffer,
