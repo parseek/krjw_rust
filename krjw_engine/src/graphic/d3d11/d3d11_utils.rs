@@ -11,6 +11,7 @@ use windows::{
 // ═══════════════════════════════════════════════════════════════
 
 /// Compile HLSL source into shader bytecode.
+#[must_use]
 pub fn compile_shader(source: &[u8], entrypoint: PCSTR, target: PCSTR) -> Result<Vec<u8>> {
     use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
     let mut shader_blob = None;
@@ -53,6 +54,7 @@ pub fn compile_shader(source: &[u8], entrypoint: PCSTR, target: PCSTR) -> Result
 }
 
 /// Compile HLSL and create a vertex shader.
+#[must_use]
 pub fn create_vs(device: &ID3D11Device, hlsl_bytes: &[u8]) -> Result<ID3D11VertexShader> {
     let blob = compile_shader(
         hlsl_bytes,
@@ -69,6 +71,7 @@ pub fn create_vs(device: &ID3D11Device, hlsl_bytes: &[u8]) -> Result<ID3D11Verte
 }
 
 /// Compile HLSL and create a pixel shader.
+#[must_use]
 pub fn create_ps(device: &ID3D11Device, hlsl_bytes: &[u8]) -> Result<ID3D11PixelShader> {
     let blob = compile_shader(
         hlsl_bytes,
@@ -85,6 +88,7 @@ pub fn create_ps(device: &ID3D11Device, hlsl_bytes: &[u8]) -> Result<ID3D11Pixel
 }
 
 /// Create an input layout from a vertex shader bytecode blob.
+#[must_use]
 pub fn create_input_layout(
     device: &ID3D11Device,
     desc: &[D3D11_INPUT_ELEMENT_DESC],
@@ -104,6 +108,7 @@ pub fn create_input_layout(
 // ═══════════════════════════════════════════════════════════════
 
 /// Create a dynamic (CPU-writeable) buffer.
+#[must_use]
 pub fn create_dynamic_buffer(
     device: &ID3D11Device,
     byte_width: u32,
@@ -127,6 +132,7 @@ pub fn create_dynamic_buffer(
 }
 
 /// Create an immutable buffer with initial data.
+#[must_use]
 pub fn create_immutable_buffer(
     device: &ID3D11Device,
     data: &[u8],
