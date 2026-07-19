@@ -161,6 +161,7 @@ pub fn create_immutable_buffer(
 }
 
 /// Create a constant buffer sized for `T`.
+#[must_use]
 pub fn create_constant_buffer<T>(device: &ID3D11Device) -> Result<ID3D11Buffer> {
     create_dynamic_buffer(
         device,
@@ -170,6 +171,7 @@ pub fn create_constant_buffer<T>(device: &ID3D11Device) -> Result<ID3D11Buffer> 
 }
 
 /// Map (DISCARD), write, and unmap a buffer.
+#[must_use]
 pub fn write_buffer<T>(
     context: &ID3D11DeviceContext,
     buffer: &ID3D11Buffer,
@@ -205,6 +207,7 @@ pub fn as_u8_slice<T>(data: &[T]) -> &[u8] {
 // ═══════════════════════════════════════════════════════════════
 
 /// Create a 2D texture with the given parameters.
+#[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn create_texture_2d(
     device: &ID3D11Device,
@@ -247,6 +250,7 @@ pub fn create_texture_2d(
 }
 
 /// Create a shader resource view for a 2D texture.
+#[must_use]
 pub fn create_srv(
     device: &ID3D11Device,
     texture: &ID3D11Texture2D,
@@ -292,6 +296,7 @@ impl TextureInfo {
 
 /// Load a texture from a `DynamicImage`, automatically selecting the
 /// smallest compatible DXGI_FORMAT (L8 → R8, L16 → R16, HDR → R32G32B32A32_FLOAT, etc.).
+#[must_use]
 pub fn load_texture_from_dynamic_image(
     device: &ID3D11Device,
     img: &image::DynamicImage,
