@@ -1105,6 +1105,7 @@ dependencies = [
  "guillotiere",
  "image",
  "kira",
+ "num_enum",
  "swash",
  "windows",
  "winit",

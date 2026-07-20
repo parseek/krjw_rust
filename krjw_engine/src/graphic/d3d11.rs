@@ -26,6 +26,8 @@ pub mod test_sprite;
 #[allow(unused)]
 pub mod test_triangle;
 #[allow(unused)]
+pub mod rstate;
+#[allow(unused)]
 pub mod batch2d;
 
 use self::state_objects::StateObjects;
