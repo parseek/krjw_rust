@@ -209,6 +209,9 @@ pub struct Batch2D {
     /// D3D11 GFX
     gfx: Arc<super::D3D11>,
 
+    // TODO: 让 D3D11 允许可变
+    // TODO: 加入 Texture、RStates（包括渲染状态、Shader等） 管理器
+
     /// `Quad`、`Polygon` 通用\
     /// 待排序、提交的顶点
     prepared_vertices: Vec<VertexP3U2C4>,
