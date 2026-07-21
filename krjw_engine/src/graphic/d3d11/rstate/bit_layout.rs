@@ -150,20 +150,28 @@ impl RState {
     }
 
     // ---------- 枚举转换（使用 num_enum 的 TryFrom） ----------
+    #[inline]
     pub fn blend_mode(&self) -> Option<BlendMode> {
-        BlendMode::try_from(self.blend_idx()).ok()
+        if self.is_advanced() { None }
+        else { BlendMode::try_from(self.blend_idx()).ok() }
     }
 
+    #[inline]
     pub fn sampler_mode(&self) -> Option<SamplerMode> {
-        SamplerMode::try_from(self.sampler_idx()).ok()
+        if self.is_advanced() { None }
+        else { SamplerMode::try_from(self.sampler_idx()).ok() }
     }
 
+    #[inline]
     pub fn raster_mode(&self) -> Option<RasterMode> {
-        RasterMode::try_from(self.raster_idx()).ok()
+        if self.is_advanced() { None }
+        else { RasterMode::try_from(self.raster_idx()).ok() }
     }
 
+    #[inline]
     pub fn stencil_mode(&self) -> Option<StencilMode> {
-        StencilMode::try_from(self.stencil_idx()).ok()
+        if self.is_advanced() { None }
+        else { StencilMode::try_from(self.stencil_idx()).ok() }
     }
 }
 
