@@ -48,15 +48,11 @@ mod windows
                 .map_err(|_| windows_core::Error::from(ERROR_INVALID_NAME))?;
 
             let full_path = self.root_path.join(file_name);
-            println!("DBG Open: filename {}", file_name);
-            println!("DBG Open: full_path {:?}", full_path);
 
             let content = std::fs::read(&full_path)
                 .map_err(|_| windows_core::Error::from(ERROR_FILE_NOT_FOUND))?;
 
             let content = String::from_utf8(content.clone()).unwrap();
-
-            println!("DBG Open: readed, size = {}, content = \n{}[EOF]", content.len(), content);
 
             let len = content.len() as u32;
             // 将 Vec 放入 Box，然后转为裸指针
@@ -68,7 +64,6 @@ mod windows
                 *pbytes = len;
             }
 
-            println!("DBG Open: OK");
             Ok(()) // S_OK
         }
 
@@ -77,7 +72,6 @@ mod windows
                 return Ok(());
             }
 
-            println!("DBG Close: From raw start");
             // 将裸指针恢复为 Box<Vec<u8>>，自动释放
             unsafe {
                 let _ = Box::from_raw(pdata as *mut u8);
@@ -94,7 +88,6 @@ mod windows
         let mut error_blob = None;
 
         let dir = dir.into();
-        println!("DBG compile_shader: dir {:?}", dir);
         let inc = MyInclude::new(dir);
         let inc = ID3DInclude::new(&inc);
 
@@ -134,37 +127,81 @@ mod windows
         })
     }
 
+    const _SHADER_EXT: &[&'static str] = &[
+        "vsh", "psh", "hlsl", "hlsli"
+    ];
+    const IGNORE_EXT: &[&'static str] = &[
+        "cso"
+    ];
+    fn ext_to_target(ext: &str) -> Option<PCSTR> {
+        match ext {
+            "vsh" => Some(PCSTR("vs_5_0\0".as_ptr() as *const _)),
+            "psh" => Some(PCSTR("ps_5_0\0".as_ptr() as *const _)),
+            _ => None,
+        }
+    }
+
 
     pub fn d3d11_shaders() {
         let current_dir = std::env::current_dir().unwrap();
-        let shaders_dir = current_dir.join("src").join("graphic").join("d3d11").join("shaders");
+        let shaders_dir = current_dir.join("src").join("graphic").join("d3d11").join("shaders").join("");
 
-        for i in std::fs::read_dir(shaders_dir).unwrap() {
-            let i = i.unwrap();
-            let filetype = i.file_type().unwrap();
-            if filetype.is_file() {
-                let path = i.path();
-                let pstr = path.to_str().unwrap();
-                let fstem = path.file_stem().unwrap().to_os_string().into_string().expect("Unsupported path name");
-                let dir = { let mut i = path.clone(); i.pop(); i };
-                let target = if let Some(ext) = path.extension() {
-                    let ext = ext.to_os_string().into_string().expect("Unsupported path name");
-                    match ext.as_str() {
-                        "vsh" => PCSTR("vs_5_0\0".as_ptr() as *const _),
-                        "psh" => PCSTR("ps_5_0\0".as_ptr() as *const _),
-                        _ => continue,
+        let mut file_paths = Vec::new();
+        
+        // 递归遍历所有文件
+        for entry in walkdir::WalkDir::new(&shaders_dir) {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if !IGNORE_EXT.contains(&ext.to_str().unwrap()) {
+                        println!("cargo:rerun-if-changed={}", path.display());
+                        file_paths.push(path.to_path_buf());
+                        // 真正编译工作可以放到这里吗？不行，因为这里只是在 build.rs 中打印指令，
+                        // 真正的编译逻辑还在后面的循环里，但为了增量，我们可以先收集需要编译的文件列表。
                     }
-                } else { continue };
-                println!("cargo:rerun-if-changed=\"{}\"", pstr);
-
-                let out_path = dir.join([fstem, ".vs.cso".to_string()].join(""));
-
-                let compiled = compile_shader(&dir, &std::fs::read(path).expect("Failed to read"), 
-                    PCSTR("main\0".as_ptr() as *const _), target).expect("Compiling failed");
-                
-                std::fs::write(&out_path, compiled).expect(&format!("Writing to {} failed", out_path.to_str().unwrap()));
+                }
             }
         }
+
+        println!("{:?}", file_paths);
+
+        for i in &file_paths {
+            if let Some(ext) = { if let Some(x) = i.extension() { x.to_str() } else { continue }} {
+                if let Some(target) = ext_to_target(ext) {
+                    let dir = { let mut o = i.clone(); o.pop(); o };
+                    let out_path = { let mut o = i.clone(); o.as_mut_os_string().push(".cso"); o };
+                    let compiled = compile_shader(&dir, &std::fs::read(i).expect("Failed to read"), 
+                        PCSTR("main\0".as_ptr() as *const _), target).expect("Compiling failed");
+                    std::fs::write(&out_path, compiled).expect(&format!("Writing to {} failed", out_path.to_str().unwrap()));
+                }
+            }
+        }
+
+        // for i in std::fs::read_dir(shaders_dir).unwrap() {
+        //     let i = i.unwrap();
+        //     let filetype = i.file_type().unwrap();
+        //     if filetype.is_file() {
+        //         let path = i.path();
+        //         let fstem = path.file_stem().unwrap().to_os_string().into_string().expect("Unsupported path name");
+        //         let dir = { let mut i = path.clone(); i.pop(); i };
+        //         let target = if let Some(ext) = path.extension() {
+        //             let ext = ext.to_os_string().into_string().expect("Unsupported path name");
+        //             match ext_to_target(&ext) {
+        //                 Some(x) => x,
+        //                 None => continue,
+        //             }
+        //         } else { continue };
+        //         println!("cargo:rerun-if-changed={}", path.display());
+
+        //         let out_path = dir.join([fstem, ".vs.cso".to_string()].join(""));
+
+        //         let compiled = compile_shader(&dir, &std::fs::read(path).expect("Failed to read"), 
+        //             PCSTR("main\0".as_ptr() as *const _), target).expect("Compiling failed");
+                
+        //         std::fs::write(&out_path, compiled).expect(&format!("Writing to {} failed", out_path.to_str().unwrap()));
+        //     }
+        // }
     }
 }
 

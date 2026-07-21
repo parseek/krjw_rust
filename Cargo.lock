@@ -1107,6 +1107,7 @@ dependencies = [
  "kira",
  "num_enum",
  "swash",
+ "walkdir",
  "windows",
  "windows-core",
  "winit",
