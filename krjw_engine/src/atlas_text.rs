@@ -19,7 +19,7 @@ use windows::Win32::Graphics::{Direct3D11::*, Dxgi::Common::*};
 
 use super::sprite2d::{HaveID, Sprite2D, Sprite2DBuffer, Sprite2DObject};
 use super::transform2d::Transform2D;
-use crate::graphic::d3d11::D3D11;
+use crate::{graphic::d3d11::D3D11, krjw_vecf};
 use crate::graphic::d3d11::d3d11_utils::{TextureInfo, create_srv, create_texture_2d};
 
 // ─────────────────────────────────────────────────────────────────────
@@ -198,6 +198,7 @@ impl TextPage {
                 srv,
                 width: pw,
                 height: ph,
+                size_inv: 1.0 / krjw_vecf!(pw, ph),
                 format: DXGI_FORMAT_R8G8B8A8_UNORM,
             }),
             pixels: vec![[0u8; 4]; (PAGE_SIZE * PAGE_SIZE) as usize],

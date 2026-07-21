@@ -6,6 +6,8 @@ use windows::{
     core::PCSTR,
 };
 
+use crate::macros::*;
+
 // ═══════════════════════════════════════════════════════════════
 // Shader helpers
 // ═══════════════════════════════════════════════════════════════
@@ -282,6 +284,7 @@ pub struct TextureInfo {
     pub srv: ID3D11ShaderResourceView,
     pub width: u32,
     pub height: u32,
+    pub size_inv: Vec2,
     pub format: DXGI_FORMAT,
 }
 
@@ -388,11 +391,14 @@ pub fn load_texture_from_dynamic_image(
 
     let srv = create_srv(device, &texture, format)?;
 
+    let size_inv = 1.0 / vecf!(width, height);
+
     Ok(TextureInfo {
         texture,
         srv,
         width,
         height,
+        size_inv,
         format,
     })
 }

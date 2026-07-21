@@ -8,6 +8,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use windows::Win32::Graphics::Direct3D11::*;
 
+use crate::{TextureInfo};
+
 use super::rstate::*;
 
 // ============================================================================
@@ -86,8 +88,10 @@ pub struct AdvancedStateDesc {
 /// 额外资源描述：纹理槽 + 常量缓冲槽
 #[derive(Hash, PartialEq, Eq, Clone, Copy)]
 pub struct ExtraResourceDesc {
-    pub textures: [u32; 8],   // 槽 0-7，0 表示未设置
-    pub cbuffers: [u32; 4],   // 槽 0-3，0 表示未设置
+    /// 槽 1-8，0 表示未设置
+    pub textures: [u32; 8],   
+    /// 槽 1-4，0 表示未设置
+    pub cbuffers: [u32; 4],   
 }
 
 impl Default for ExtraResourceDesc {
@@ -108,7 +112,7 @@ pub struct ResourceManager {
     device: ID3D11Device,
 
     // 资源池
-    pub textures: ResourcePool<ID3D11ShaderResourceView>,
+    pub textures: ResourcePool<Arc<TextureInfo>>,
     pub vertex_shaders: ResourcePool<ID3D11VertexShader>,
     pub pixel_shaders: ResourcePool<ID3D11PixelShader>,
     pub samplers: ResourcePool<ID3D11SamplerState>,
@@ -484,8 +488,8 @@ impl ResourceManager {
             if let Some(extra) = self.extra_reverse.get(&desc.extra_id) {
                 for (slot, &tex_id) in extra.textures.iter().enumerate() {
                     if tex_id != 0 {
-                        if let Some(srv) = self.textures.get(tex_id) {
-                            ctx.PSSetShaderResources(slot as u32, Some(&[Some(srv.clone())]));
+                        if let Some(tex) = self.textures.get(tex_id) {
+                            ctx.PSSetShaderResources(slot as u32, Some(&[Some(tex.srv.clone())]));
                         }
                     }
                 }
