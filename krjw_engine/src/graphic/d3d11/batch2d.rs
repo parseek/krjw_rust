@@ -1,5 +1,6 @@
 //! 2D 批量渲染器：支持自动合批、状态排序、Basic/Advanced 模式。
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use anyhow::Result;
@@ -220,6 +221,17 @@ impl SortKey {
     }
 }
 
+pub trait ForeignDraw {
+    /// 资源管理器 | 设备上下文 | 当前 `SortKey` | 调用（连续）`Foreign` 前最后的 `RState` \
+    /// **只会在单线程中**调用。\
+    /// `draw` 绝不保证初始渲染状态不变，应当自行管理。\
+    /// 如果要使用之前的状态，可以尝试调用 `prepare_basic_state`.
+    #[must_use]
+    fn draw(&mut self, manager: &Mutex<ResourceManager>, ctx: &ID3D11DeviceContext, key: SortKey, last_rstate: RState) -> Result<()>;
+}
+
+type ForeignType = Rc<RefCell<dyn ForeignDraw>>;
+
 #[repr(align(16))]
 pub enum DrawContent {
     Quad { start_vert: u32 },
@@ -229,7 +241,8 @@ pub enum DrawContent {
         start_index: u32,
         index_count: u16,
     },
-    Foreign(Rc<dyn Fn(&ID3D11DeviceContext, SortKey)>),
+    /// 资源管理器 | 设备上下文 | 当前 `SortKey` | 调用（连续）`Foreign` 前最后的 `RState`
+    Foreign(ForeignType),
 }
 
 #[repr(align(16))]
@@ -314,6 +327,27 @@ impl Front {
     }
 }
 
+/// 设置为 `pub` 方便闭包调用
+pub fn prepare_basic_state(manager: &Arc<Mutex<ResourceManager>>, ctx: &ID3D11DeviceContext, rstate: RState) {
+    let mut manager = manager.lock().unwrap();
+    unsafe {
+        let blend = manager.get_basic_blend(rstate.blend_idx());
+        ctx.OMSetBlendState(Some(blend), None, 0xFFFFFFFF);
+        let sampler = manager.get_basic_sampler(rstate.sampler_idx()).clone();
+        ctx.PSSetSamplers(0, Some(&[Some(sampler)]));
+        let raster = manager.get_basic_rasterizer(rstate.raster_idx());
+        ctx.RSSetState(Some(raster));
+
+        // 深度/模板：合并为一个索引
+        // bit0-1: 模板模式, bit2: 深度测试, bit3: 深度写入
+        let ds_idx = rstate.stencil_idx()
+            | ((rstate.depth_test() as u8) << 2)
+            | ((rstate.depth_write() as u8) << 3);
+        let ds = manager.get_basic_depth_stencil(ds_idx);
+        ctx.OMSetDepthStencilState(Some(ds), 0);
+    }
+}
+
 // ============================================================================
 // 5. Batch2D 主结构
 // ============================================================================
@@ -367,25 +401,6 @@ impl Batch2D {
 
     // ---------- 提交与绘制 ----------
 
-    fn prepare_basic_state(manager: &Arc<Mutex<ResourceManager>>, ctx: &ID3D11DeviceContext, rstate: RState) {
-        let mut manager = manager.lock().unwrap();
-        unsafe {
-            let blend = manager.get_basic_blend(rstate.blend_idx());
-            ctx.OMSetBlendState(Some(blend), None, 0xFFFFFFFF);
-            let sampler = manager.get_basic_sampler(rstate.sampler_idx()).clone();
-            ctx.PSSetSamplers(0, Some(&[Some(sampler)]));
-            let raster = manager.get_basic_rasterizer(rstate.raster_idx());
-            ctx.RSSetState(Some(raster));
-
-            // 深度/模板：合并为一个索引
-            // bit0-1: 模板模式, bit2: 深度测试, bit3: 深度写入
-            let ds_idx = rstate.stencil_idx()
-                | ((rstate.depth_test() as u8) << 2)
-                | ((rstate.depth_write() as u8) << 3);
-            let ds = manager.get_basic_depth_stencil(ds_idx);
-            ctx.OMSetDepthStencilState(Some(ds), 0);
-        }
-    }
 
     #[must_use = "Result should be used"]
     fn submit_and_draw(front: &mut Front, ctx: &ID3D11DeviceContext) -> Result<()> {
@@ -442,18 +457,35 @@ impl Batch2D {
         }
 
         let mut current_rstate = self.draw_cmds[self.cmd_idx[0] as usize].key.rstate();
+        if current_rstate.is_basic() {
+            prepare_basic_state(&self.manager, ctx, current_rstate);
+        } else {
+            self.manager.lock().unwrap().bind_advanced_state(ctx, current_rstate);
+        }
+
+        let mut last_foreign = false;
+
 
         for &idx in &self.cmd_idx {
             let key = self.draw_cmds[idx as usize].key;
             let rstate = key.rstate();
 
-            if rstate != current_rstate {
+            let content = &self.draw_cmds[idx as usize].content;
+            if last_foreign { if let DrawContent::Foreign(_) = content {} else {
+                if rstate.is_basic() {
+                    prepare_basic_state(&self.manager, ctx, rstate);
+                } else {
+                    self.manager.lock().unwrap().bind_advanced_state(ctx, rstate);
+                }
+                current_rstate = rstate;
+                last_foreign = false;
+            }} else if rstate != current_rstate {
                 // 提交当前批次
                 Self::submit_and_draw(&mut self.front, ctx)?;
 
                 // 切换状态
                 if rstate.is_basic() {
-                    Self::prepare_basic_state(&self.manager, ctx, rstate);
+                    prepare_basic_state(&self.manager, ctx, rstate);
                 } else {
                     self.manager.lock().unwrap().bind_advanced_state(ctx, rstate);
                 }
@@ -461,7 +493,7 @@ impl Batch2D {
             }
 
             // 逐个提取内容数据，再调用需要 &mut self 的方法
-            match &self.draw_cmds[idx as usize].content {
+            match content {
                 DrawContent::Quad { start_vert } => {
                     let start = *start_vert as usize;
                     // 构造固定数组，编译期安全
@@ -496,10 +528,9 @@ impl Batch2D {
                     }
                 }
                 DrawContent::Foreign(callback) => {
-                    let cb = callback.clone();
                     Self::submit_and_draw(&mut self.front, ctx)?;
-                    cb(ctx, key);
-                    self.front.front.clear();
+                    callback.borrow_mut().draw(&self.manager, ctx, key, current_rstate)?;
+                    last_foreign = true;
                 }
             }
         }
@@ -547,19 +578,15 @@ impl Batch2D {
         &mut self,
         key: SortKey,
         vertices: &[VertexP3U2C4],
-        indicies: &[[u16; 3]],
+        triangles: &[[u16; 3]],
     ) {
         #[cfg(debug_assertions)]
-        if let Some(&max_idx) = indicies.iter().max() {
-            let a = |i| { debug_assert!(
-                max_idx[i] < vertices.len() as u16,
-                "Index out of bounds: max_idx={}, vertex_count={}",
-                max_idx[i],
-                vertices.len()
-            ) };
-            a(0);
-            a(1);
-            a(2);
+        {
+            for tri in triangles {
+                for &idx in tri {
+                    debug_assert!(idx < vertices.len() as u16, "Index {} out of bounds (vertex count {})", idx, vertices.len());
+                }
+            }
         }
         debug_assert!(
             vertices.len() <= u16::MAX as usize,
@@ -569,14 +596,14 @@ impl Batch2D {
         let vert_start = self.prepared_vertices.len();
         self.prepared_vertices.extend_from_slice(vertices);
         let idx_start = self.prepared_pindicies.len();
-        self.prepared_pindicies.extend_from_slice(bytemuck::cast_slice(indicies));
+        self.prepared_pindicies.extend_from_slice(bytemuck::cast_slice(triangles));
         self.add_cmd(DrawCmd {
             key,
             content: DrawContent::Polygon {
                 start_vert: vert_start as u32,
                 vert_count: vertices.len() as u16,
                 start_index: idx_start as u32,
-                index_count: indicies.len() as u16,
+                index_count: triangles.len() as u16 * 3,
             },
         });
     }
@@ -585,7 +612,7 @@ impl Batch2D {
     pub fn add_foreign(
         &mut self,
         key: SortKey,
-        callback: Rc<dyn Fn(&ID3D11DeviceContext, SortKey)>,
+        callback: ForeignType,
     ) {
         self.add_cmd(DrawCmd {
             key,
