@@ -1,19 +1,54 @@
-use std::sync::Arc;
+//! 2D 批量渲染器：支持自动合批、状态排序、Basic/Advanced 模式。
 
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use anyhow::Result;
+use windows::core::PCSTR;
 use crate::platform::direct3d11::*;
 
-use crate::graphic::d3d11::d3d11_utils;
+use super::rstate::*;
+use super::resource_manager::ResourceManager;
+use super::d3d11_utils;
 
-#[derive(Clone, Copy, Debug, Default)]
+// ============================================================================
+// 1. 安全类型定义（编译期防止 ID 混淆）
+// ============================================================================
+
+/// 纹理资源 ID
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TextureId(pub u32);
+
+/// 顶点着色器 ID
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct VertexShaderId(pub u32);
+
+/// 像素着色器 ID
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PixelShaderId(pub u32);
+
+/// 常量缓冲区 ID
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ConstantBufferId(pub u32);
+
+// ============================================================================
+// 2. 顶点格式
+// ============================================================================
+
+#[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct VertexP3U2C4 {
-    pos: [f32; 3],
-    uv: [f32; 2],
-    color: [f32; 4],
+    pub pos: [f32; 3],
+    pub uv: [f32; 2],
+    pub color: [f32; 4],
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
+// ============================================================================
+// 3. BeginToDraw（单次 DrawCall 的缓冲区）
+// ============================================================================
+
+const DRAWPAGE_CAPACITY_TRIANGLES: usize = 2048;
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum Indicies {
     QuadOnly,
     Polygon,
@@ -21,10 +56,12 @@ enum Indicies {
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum PushResult {
-    /// Don't have to reset
+    /// Don't have to reset\
+    /// 无需 DrawCall & 重置
     Ok,
 
-    /// Have to do DrawCall and reset
+    /// Have to do DrawCall and reset\
+    /// 需要 DrawCall & 重置
     Full,
 }
 
@@ -38,40 +75,76 @@ struct BeginToDraw {
 }
 
 impl BeginToDraw {
-    /// 一次 `DrawCall` 最大的三角形数
-    pub const DRAWPAGE_CAPACITY_TRIANGLES: usize = 2048;
-    pub const QUAD_THRESHOLD: u32 = 16;
-    
-    /// 顶点缓存的容量
-    pub const fn get_idx_capacity() -> usize { Self::DRAWPAGE_CAPACITY_TRIANGLES * 3 }
-    pub const fn get_vert_capacity() -> usize { Self::DRAWPAGE_CAPACITY_TRIANGLES * 3 }
+    const QUAD_INDICIES: [u16; 6] = [0, 1, 3, 3, 2, 0];
+    const QUAD_THRESHOLD: u32 = 16;
 
-}
-
-impl BeginToDraw {
     pub fn new() -> Self {
+        let capacity = DRAWPAGE_CAPACITY_TRIANGLES * 3;
         Self {
-            vertices: Box::new([VertexP3U2C4::default(); Self::get_vert_capacity()]),
-            pindicies: Box::new([0; Self::get_vert_capacity()]),
+            vertices: vec![VertexP3U2C4::default(); capacity].into_boxed_slice(),
+            pindicies: vec![0; capacity].into_boxed_slice(),
             indicies: Indicies::QuadOnly,
             verts_count: 0,
             triangles: 0,
             polygoned_quads: 0,
         }
     }
-    const QUAD_INDICIES: [u16; 6] = [0, 1, 3, 3, 2, 0];
+
+    pub fn clear(&mut self) {
+        self.indicies = Indicies::QuadOnly;
+        self.triangles = 0;
+        self.verts_count = 0;
+        self.polygoned_quads = 0;
+    }
+
+    /// 接受固定数组保证编译期长度正确
+    pub fn push_quad(&mut self, vertices: &[VertexP3U2C4; 4]) -> PushResult {
+        if self.indicies == Indicies::Polygon {
+            if self.polygoned_quads > Self::QUAD_THRESHOLD {
+                return PushResult::Full;
+            }
+            self.polygoned_quads += 1;
+            self.push_polygon(vertices, &Self::QUAD_INDICIES)
+        } else {
+            let input_tris = (Self::QUAD_INDICIES.len() / 3) as u32;
+            if self.triangles + input_tris <= DRAWPAGE_CAPACITY_TRIANGLES as u32 {
+                let start = self.verts_count as usize;
+                let vert_slice = &mut self.vertices[start..start + vertices.len()];
+                vert_slice.copy_from_slice(vertices);
+                self.verts_count += vertices.len() as u32;
+                self.triangles += input_tris;
+                PushResult::Ok
+            } else {
+                PushResult::Full
+            }
+        }
+    }
 
     pub fn push_polygon(&mut self, vertices: &[VertexP3U2C4], indicies: &[u16]) -> PushResult {
-        debug_assert!(vertices.len() <= indicies.len());
-        debug_assert_eq!(indicies.len() % 3, 0);
+        debug_assert_eq!(
+            indicies.len() % 3,
+            0,
+            "Index count must be multiple of 3"
+        );
+        // 编译期不能保证索引不越界，但运行时 debug 模式检查
+        if let Some(&max_idx) = indicies.iter().max() {
+            debug_assert!(
+                max_idx < vertices.len() as u16,
+                "Index out of bounds: max_idx={}, vertex_count={}",
+                max_idx,
+                vertices.len()
+            );
+        }
+        debug_assert!(
+            vertices.len() <= u16::MAX as usize,
+            "Vertex count exceeds u16::MAX"
+        );
+
         let input_tris = (indicies.len() / 3) as u32;
-        if self.triangles + input_tris <= Self::DRAWPAGE_CAPACITY_TRIANGLES as u32 {
+
+        if self.triangles + input_tris <= DRAWPAGE_CAPACITY_TRIANGLES as u32 {
             if self.indicies == Indicies::QuadOnly {
-                debug_assert_eq!(self.triangles % 2, 0);
-                debug_assert_eq!(self.verts_count % 4, 0);
-                if self.triangles > Self::QUAD_THRESHOLD*2 {
-                    return PushResult::Full;
-                }
+                // 转换已有的四边形的索引
                 let quads = self.triangles / 2;
                 for i in 0..quads {
                     let si = (i * 4) as u16;
@@ -84,13 +157,18 @@ impl BeginToDraw {
                     self.pindicies[sv + 5] = si + Self::QUAD_INDICIES[5];
                 }
             }
-            let start_vert = &mut self.vertices[self.verts_count as usize];
-            let start_indicies = self.triangles as usize * 3;
-            let start_indicies = &mut self.pindicies[start_indicies..start_indicies+indicies.len()];
-            let vert_slice = &mut self.vertices[self.verts_count as usize..self.verts_count as usize + vertices.len()];
+
+            let vert_start = self.verts_count as usize;
+            let vert_slice = &mut self.vertices[vert_start..vert_start + vertices.len()];
             vert_slice.copy_from_slice(vertices);
+
+            let idx_start = self.triangles as usize * 3;
+            let idx_slice = &mut self.pindicies[idx_start..idx_start + indicies.len()];
             let base = self.verts_count as u16;
-            start_indicies.iter_mut().zip(indicies.iter()).for_each(|(dst, &src)| *dst = src + base);
+            for (dst, &src) in idx_slice.iter_mut().zip(indicies.iter()) {
+                *dst = src + base;
+            }
+
             self.verts_count += vertices.len() as u32;
             self.triangles += input_tris;
             self.indicies = Indicies::Polygon;
@@ -99,104 +177,60 @@ impl BeginToDraw {
             PushResult::Full
         }
     }
-    pub fn push_quad(&mut self, vertices: &[VertexP3U2C4]) -> PushResult {
-        debug_assert_eq!(vertices.len(), 4);
-        if self.indicies == Indicies::Polygon {
-            if self.polygoned_quads > Self::QUAD_THRESHOLD {
-                return PushResult::Full;
-            }
-            self.polygoned_quads+=1;
-            self.push_polygon(vertices, &Self::QUAD_INDICIES)
-        } else {
-            debug_assert!(vertices.len() <= Self::QUAD_INDICIES.len());
-            debug_assert_eq!(Self::QUAD_INDICIES.len() % 3, 0);
-            debug_assert_eq!(self.vertices.len() % 4, 0);
-            let input_tris = (Self::QUAD_INDICIES.len() / 3) as u32;
-            if self.triangles + input_tris <= Self::DRAWPAGE_CAPACITY_TRIANGLES as u32 {
-                let start_vert = &mut self.vertices[self.verts_count as usize];
-                // let start_indicies = &mut self.pindicies[self.triangles as usize * 3];
-                let vert_slice = &mut self.vertices[self.verts_count as usize..self.verts_count as usize + vertices.len()];
-                vert_slice.copy_from_slice(vertices);
-                // unsafe { std::ptr::copy_nonoverlapping(Self::QUAD_INDICIES.as_ptr(), start_indicies, Self::QUAD_INDICIES.len());}
-                self.verts_count += vertices.len() as u32;
-                self.triangles += input_tris;
-                PushResult::Ok
-            } else {
-                PushResult::Full
-            }
-        }
-    }
-    pub fn clear(&mut self) {
-        self.indicies = Indicies::QuadOnly;
-        self.triangles = 0;
-        self.verts_count = 0;
-        self.polygoned_quads = 0;
-    }
 
     pub fn get_buf_refs(&self) -> (&[VertexP3U2C4], Option<&[u16]>) {
-        (&self.vertices[0..self.verts_count as usize], match self.indicies { Indicies::Polygon => Some(&self.pindicies[0..self.triangles as usize * 3]), Indicies::QuadOnly => None })
+        let verts = &self.vertices[0..self.verts_count as usize];
+        let idx = match self.indicies {
+            Indicies::Polygon => Some(&self.pindicies[0..self.triangles as usize * 3]),
+            Indicies::QuadOnly => None,
+        };
+        (verts, idx)
+    }
+
+    pub fn triangle_count(&self) -> u32 {
+        self.triangles
     }
 }
 
-/// 确保顶点索引 <= u16::MAX
-const _: () = assert!(BeginToDraw::get_vert_capacity() <= u16::MAX as usize);
+// ============================================================================
+// 4. SortKey & DrawCmd
+// ============================================================================
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct SortKey(pub u128);
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
-pub struct StateKey(pub u64);
-
-impl StateKey {
-    pub fn new(texture_id: u32, rstates_id: u32) -> Self {
-        let texture_id = texture_id as u64;
-        let rstates_id = rstates_id as u64;
-        Self(texture_id << 32 | rstates_id)
-    }
-    pub fn texture_id(&self) -> u32 {
-        (self.0 >> 32) as u32
-    }
-    pub fn rstates_id(&self) -> u32 {
-        (self.0) as u32
-    }
-}
-
 impl SortKey {
-    pub fn new(z_index: u64, texture_id: u32, rstates_id: u32) -> Self {
-        let z_index = z_index as u128;
-        let texture_id = texture_id as u128;
-        let rstates_id = rstates_id as u128;
-        Self(z_index << 64 | texture_id << 32 | rstates_id)
+    pub fn new(z_index: u64, texture: TextureId, rstate: RState) -> Self {
+        let z = z_index as u128;
+        let tex = texture.0 as u128;
+        let r = rstate.0 as u128;
+        SortKey((z << 64) | (tex << 32) | r)
     }
+
     pub fn z_index(&self) -> u64 {
         (self.0 >> 64) as u64
     }
-    pub fn texture_id(&self) -> u32 {
-        (self.0 >> 32) as u32
+
+    pub fn texture_id(&self) -> TextureId {
+        TextureId((self.0 >> 32) as u32)
     }
-    pub fn rstates_id(&self) -> u32 {
-        (self.0) as u32
-    }
-    pub fn state_key(&self) -> StateKey {
-        StateKey((self.0) as u64)
+
+    pub fn rstate(&self) -> RState {
+        RState((self.0 & 0xFFFFFFFF) as u32)
     }
 }
 
 #[repr(align(16))]
 pub enum DrawContent {
-    Quad {
-        start_vert: u32,
-    },
+    Quad { start_vert: u32 },
     Polygon {
         start_vert: u32,
         vert_count: u16,
         start_index: u32,
         index_count: u16,
     },
-    Foregin(Arc<dyn Fn(&super::D3D11, SortKey) -> ()>),
+    Foreign(Rc<dyn Fn(&ID3D11DeviceContext, SortKey)>),
 }
-
-// 可以利用 SIMD 复制？
 
 #[repr(align(16))]
 pub struct DrawCmd {
@@ -204,73 +238,26 @@ pub struct DrawCmd {
     pub content: DrawContent,
 }
 
-/// 生成 DrawCmd、内部排序、（一次或多次）提交给 BeginToDraw 存储再将其缓冲区写入 GPU 缓冲、设置渲染状态、绘制
-pub struct Batch2D {
-    /// D3D11 GFX
-    gfx: Arc<super::D3D11>,
+struct Front {
+    // GPU 缓冲区
 
-    // TODO: 让 D3D11 允许可变
-    // TODO: 加入 Texture、RStates（包括渲染状态、Shader等） 管理器
+    /// `P3U2C4` 的 `Layout`
+    pub(super) input_layout: ID3D11InputLayout,
 
-    /// `Quad`、`Polygon` 通用\
-    /// 待排序、提交的顶点
-    prepared_vertices: Vec<VertexP3U2C4>,
+    /// 通用动态顶点缓冲
+    pub(super) vertex_buffer: ID3D11Buffer,
 
-    /// `Polygon` 用的 **相对** 索引\
-    /// 待加入偏移量、排序、提交的索引
-    prepared_pindicies: Vec<u16>,
+    /// 多边形动态顶点缓冲
+    pub(super) poly_index_buffer: ID3D11Buffer,
 
-    /// InputLayout
-    input_layout: ID3D11InputLayout,
+    /// 四边形静态顶点缓冲
+    pub(super) quad_index_buffer: ID3D11Buffer,
 
-    /// `Quad`、`Polygon` 通用动态顶点缓冲
-    vertex_buffer: ID3D11Buffer,
-
-    /// `Polygon` 的动态索引缓冲
-    pindex_buffer: ID3D11Buffer,
-
-    /// `QuadOnly` 的不变索引缓冲
-    qindex_buffer: ID3D11Buffer,
-
-    /// DrawCmd 合集
-    draw_cmds: Vec<DrawCmd>,
-
-    /// DrawCmd 排序索引
-    cmd_idx: Vec<u32>,
-
-    /// `draw_cmds` 变更，排序打乱
-    cmd_dirted: bool,
-
-    /// `BeginToDraw` 用于准备写入 GPU 缓存的数据
-    front: BeginToDraw,
+    /// 预备数据
+    pub(super) front: BeginToDraw,
 }
 
-impl Batch2D {
-    /// 最初的三角形数容量
-    pub const INITIAL_PREPARE_CAPACITY_TRIANGLES: usize = 2048;
-
-    /// 连续的四边形超过这个数字时，遇到 Polygon 时才不会将先前的 Quad 当作 
-    pub const fn get_idx_initial_capacity() -> usize { Self::INITIAL_PREPARE_CAPACITY_TRIANGLES * 3 }
-    pub const fn get_vert_initial_capacity() -> usize { Self::INITIAL_PREPARE_CAPACITY_TRIANGLES * 3 }
-    fn generate_quad_indicies() -> Box<[u16]> {
-        let mut indicies = Vec::<u16>::with_capacity(BeginToDraw::get_idx_capacity());
-        for i in 0..BeginToDraw::DRAWPAGE_CAPACITY_TRIANGLES {
-            let i = (i * 4) as u16;
-            indicies.extend([0, 1, 3, 3 ,2, 0].map(|x| x + i));
-
-            // 0 -- 1
-            // | `. |
-            // 2 -- 3
-            // 0 1 3 3 2 0
-        }
-
-        indicies.into_boxed_slice()
-    }
-}
-
-use windows::core::PCSTR;
-
-const INPUT_LAYOUT_P3U2C4: [D3D11_INPUT_ELEMENT_DESC; 3] = [
+const INPUT_LAYOUT_PUC: [D3D11_INPUT_ELEMENT_DESC; 3] = [
     D3D11_INPUT_ELEMENT_DESC {
         SemanticName: PCSTR(b"POSITION\0".as_ptr()),
         SemanticIndex: 0,
@@ -285,7 +272,7 @@ const INPUT_LAYOUT_P3U2C4: [D3D11_INPUT_ELEMENT_DESC; 3] = [
         SemanticIndex: 0,
         Format: DXGI_FORMAT_R32G32_FLOAT,
         InputSlot: 0,
-        AlignedByteOffset: 12,  // pos 占 12 字节
+        AlignedByteOffset: 12,
         InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
         InstanceDataStepRate: 0,
     },
@@ -294,31 +281,76 @@ const INPUT_LAYOUT_P3U2C4: [D3D11_INPUT_ELEMENT_DESC; 3] = [
         SemanticIndex: 0,
         Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
         InputSlot: 0,
-        AlignedByteOffset: 20,  // pos(12) + uv(8) = 20
+        AlignedByteOffset: 20,
         InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
         InstanceDataStepRate: 0,
     },
 ];
 
-impl Batch2D {
-    #[must_use]
-    pub fn new(gfx: Arc<super::D3D11>) -> Result<Self> {
-        let qindex_buffer = d3d11_utils::create_immutable_buffer(&gfx.device, bytemuck::cast_slice(&Self::generate_quad_indicies()), D3D11_BIND_INDEX_BUFFER.0 as u32)?;
-        let pindex_buffer = d3d11_utils::create_dynamic_buffer(&gfx.device, (BeginToDraw::get_idx_capacity()*std::mem::size_of::<u16>()) as u32, D3D11_BIND_INDEX_BUFFER.0 as u32)?;
-        let vertex_buffer = d3d11_utils::create_dynamic_buffer(&gfx.device, (BeginToDraw::get_vert_capacity()*std::mem::size_of::<VertexP3U2C4>()) as u32, D3D11_BIND_VERTEX_BUFFER.0 as u32)?;
-        let input_layout = d3d11_utils::create_input_layout(&gfx.device, &INPUT_LAYOUT_P3U2C4, include_bytes!("shaders/vs_p3u2c4_layout.cso"))?; // TODO
+const _:() = { assert!(DRAWPAGE_CAPACITY_TRIANGLES % 2 == 0) };
 
+fn gen_quad_indicies() -> Box<[[u16; 6]; DRAWPAGE_CAPACITY_TRIANGLES/2]> {
+    let mut b = Box::new([[0_u16; 6]; DRAWPAGE_CAPACITY_TRIANGLES/2]);
+    for (i, q) in b.iter_mut().enumerate() {
+        *q = BeginToDraw::QUAD_INDICIES.map(|idx| idx + i as u16 * 4);
+    }
+    b
+}
+
+impl Front {
+    fn new(device: &ID3D11Device) -> Result<Self> {
+        let vertex_buffer = d3d11_utils::create_dynamic_buffer(device, (DRAWPAGE_CAPACITY_TRIANGLES * 3 * size_of::<VertexP3U2C4>()) as u32, D3D11_BIND_VERTEX_BUFFER.0 as u32)?;
+        let input_layout = d3d11_utils::create_input_layout(device, &INPUT_LAYOUT_PUC, include_bytes!("shaders/vs_p3u2c4_layout.cso"))?;
+        let poly_index_buffer = d3d11_utils::create_dynamic_buffer(device, (DRAWPAGE_CAPACITY_TRIANGLES * 3 * size_of::<u16>()) as u32, D3D11_BIND_INDEX_BUFFER.0 as u32)?;
+        let quad_index_buffer = d3d11_utils::create_immutable_buffer(device, bytemuck::cast_slice(gen_quad_indicies().as_slice()), D3D11_BIND_INDEX_BUFFER.0 as u32)?;
+        let front = BeginToDraw::new();
         Ok(Self {
-            gfx,
-            prepared_vertices: Vec::with_capacity(Self::get_vert_initial_capacity()),
-            prepared_pindicies: Vec::with_capacity(Self::get_idx_initial_capacity()),
-            qindex_buffer,
-            pindex_buffer,
             vertex_buffer,
             input_layout,
+            poly_index_buffer,
+            quad_index_buffer,
+            front,
+        })
+    }
+}
+
+// ============================================================================
+// 5. Batch2D 主结构
+// ============================================================================
+
+pub struct Batch2D {
+    manager: Arc<Mutex<ResourceManager>>,
+    device: ID3D11Device,
+
+    // 准备好的顶点/索引数据
+    prepared_vertices: Vec<VertexP3U2C4>,
+    prepared_pindicies: Vec<u16>,
+
+    // 命令列表
+    draw_cmds: Vec<DrawCmd>,
+    cmd_idx: Vec<u32>,
+    cmd_dirted: bool,
+
+    // Front
+    front: Front,
+}
+
+impl Batch2D {
+    const INITIAL_CAPACITY_TRIANGLES: usize = 2048;
+
+    pub fn new(
+        device: ID3D11Device,
+        manager: Arc<Mutex<ResourceManager>>,
+    ) -> Result<Self> {
+        let capacity = Self::INITIAL_CAPACITY_TRIANGLES * 3;
+        Ok(Self {
+            manager,
+            front: Front::new(&device)?,
+            device,
+            prepared_vertices: Vec::with_capacity(capacity),
+            prepared_pindicies: Vec::with_capacity(capacity),
             draw_cmds: Vec::with_capacity(1024),
             cmd_idx: Vec::with_capacity(1024),
-            front: BeginToDraw::new(),
             cmd_dirted: false,
         })
     }
@@ -331,118 +363,239 @@ impl Batch2D {
         self.cmd_dirted = false;
     }
 
-    #[must_use]
-    fn submit_and_draw(&self) -> Result<()> {
-        if self.front.triangles == 0 { return Ok(());}
-        let (verts, indicies) = self.front.get_buf_refs();
+    
 
-        unsafe { self.gfx.imm_context.IASetInputLayout(&self.input_layout) };
-        unsafe { self.gfx.imm_context.IASetVertexBuffers(0, 1, Some(&[Some(self.vertex_buffer.clone())] as *const _), Some(&[std::mem::size_of::<VertexP3U2C4>() as u32] as *const _), Some(&[0_u32] as *const _)) };
-        
-        // 写入 VB
-        d3d11_utils::write_buffer(&self.gfx.imm_context, &self.vertex_buffer, verts)?;
+    // ---------- 提交与绘制 ----------
+
+    fn prepare_basic_state(manager: &Arc<Mutex<ResourceManager>>, ctx: &ID3D11DeviceContext, rstate: RState) {
+        let mut manager = manager.lock().unwrap();
+        unsafe {
+            let blend = manager.get_basic_blend(rstate.blend_idx());
+            ctx.OMSetBlendState(Some(blend), None, 0xFFFFFFFF);
+            let sampler = manager.get_basic_sampler(rstate.sampler_idx()).clone();
+            ctx.PSSetSamplers(0, Some(&[Some(sampler)]));
+            let raster = manager.get_basic_rasterizer(rstate.raster_idx());
+            ctx.RSSetState(Some(raster));
+
+            // 深度/模板：合并为一个索引
+            // bit0-1: 模板模式, bit2: 深度测试, bit3: 深度写入
+            let ds_idx = rstate.stencil_idx()
+                | ((rstate.depth_test() as u8) << 2)
+                | ((rstate.depth_write() as u8) << 3);
+            let ds = manager.get_basic_depth_stencil(ds_idx);
+            ctx.OMSetDepthStencilState(Some(ds), 0);
+        }
+    }
+
+    #[must_use = "Result should be used"]
+    fn submit_and_draw(front: &mut Front, ctx: &ID3D11DeviceContext) -> Result<()> {
+        if front.front.triangle_count() == 0 {
+            return Ok(());
+        }
+
+        let (verts, indicies) = front.front.get_buf_refs();
+
+        unsafe {
+            ctx.IASetInputLayout(&front.input_layout);
+            ctx.IASetVertexBuffers(
+                0,
+                1,
+                Some([Some(front.vertex_buffer.clone())].as_ptr()),
+                Some([std::mem::size_of::<VertexP3U2C4>() as u32].as_ptr()),
+                Some([0_u32].as_ptr()),
+            );
+        }
+
+        // 写入顶点数据
+        d3d11_utils::write_buffer(ctx, &front.vertex_buffer, verts)?;
 
         if let Some(indicies) = indicies {
-            d3d11_utils::write_buffer(&self.gfx.imm_context, &self.pindex_buffer, indicies);
-            unsafe { self.gfx.imm_context.IASetIndexBuffer(Some(&self.pindex_buffer), DXGI_FORMAT_R16_UINT, 0) };
+            d3d11_utils::write_buffer(ctx, &front.poly_index_buffer, indicies)?;
+            unsafe {
+                ctx.IASetIndexBuffer(Some(&front.poly_index_buffer), DXGI_FORMAT_R16_UINT, 0);
+            }
         } else {
-            unsafe { self.gfx.imm_context.IASetIndexBuffer(Some(&self.qindex_buffer), DXGI_FORMAT_R16_UINT, 0) };
+            unsafe {
+                ctx.IASetIndexBuffer(Some(&front.quad_index_buffer), DXGI_FORMAT_R16_UINT, 0);
+            }
         }
-        unsafe { self.gfx.imm_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);};
-        unsafe { self.gfx.imm_context.DrawIndexed(self.front.triangles * 3, 0, 0) };
+
+        unsafe {
+            ctx.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            ctx.DrawIndexed(front.front.triangle_count() * 3, 0, 0);
+        }
+
+        front.front.clear();
         Ok(())
     }
 
-    fn prepare_state(&self, texture_id: u32, rstates_id: u32) {
-        unimplemented!()
-    }
+    pub fn draw_retain(&mut self, ctx: &ID3D11DeviceContext) -> Result<()> {
+        if self.draw_cmds.is_empty() {
+            return Ok(());
+        }
 
-    #[must_use]
-    fn on_change_state(&self, texture_id: u32, rstates_id: u32) -> Result<()> {
-        self.prepare_state(texture_id, rstates_id);
-        self.submit_and_draw();
-        Ok(())
-    }
-
-    /// 绘制后保留批处理内容
-    pub fn draw_retain(&mut self) -> Result<()> {
-        debug_assert_eq!(self.cmd_idx.len(), self.draw_cmds.len());
-        if self.draw_cmds.len() == 0 { return Ok(()); }
+        // 排序
         if self.cmd_dirted {
-            // 稳定排序
-            self.cmd_idx.sort_by_key(|i| self.draw_cmds[*i as usize].key);
+            self.cmd_idx
+                .sort_unstable_by_key(|&i| self.draw_cmds[i as usize].key);
             self.cmd_dirted = false;
         }
-        let mut state_key = self.draw_cmds[0].key.state_key();
-        for i in self.cmd_idx.iter() {
-            let i = *i as usize;
-            let cmd = &self.draw_cmds[i];
-            let key = cmd.key;
-            if key.state_key() != state_key {
-                self.on_change_state(state_key.texture_id(), state_key.rstates_id());
-                state_key = key.state_key();
+
+        let mut current_rstate = self.draw_cmds[self.cmd_idx[0] as usize].key.rstate();
+
+        for &idx in &self.cmd_idx {
+            let key = self.draw_cmds[idx as usize].key;
+            let rstate = key.rstate();
+
+            if rstate != current_rstate {
+                // 提交当前批次
+                Self::submit_and_draw(&mut self.front, ctx)?;
+
+                // 切换状态
+                if rstate.is_basic() {
+                    Self::prepare_basic_state(&self.manager, ctx, rstate);
+                } else {
+                    self.manager.lock().unwrap().bind_advanced_state(ctx, rstate);
+                }
+                current_rstate = rstate;
             }
-            match &cmd.content {
-                DrawContent::Foregin(x) => {
-                    self.on_change_state(key.texture_id(), key.rstates_id())?;
-                    self.front.clear();
-                    x(&self.gfx, cmd.key)
-                },
-                DrawContent::Polygon { start_vert, vert_count, start_index, index_count } => {
-                    let start_vert = *start_vert as usize;
-                    let vert_count = *vert_count as usize;
-                    let start_index = *start_index as usize;
-                    let index_count = *index_count as usize;
-                    let vertices = &self.prepared_vertices[start_vert..start_vert+vert_count];
-                    let indicies = &self.prepared_pindicies[start_index..start_index+index_count];
-                    match self.front.push_polygon(vertices, indicies) {
-                        PushResult::Full => {
-                            self.on_change_state(key.texture_id(), key.rstates_id())?;
-                            self.front.clear();
-                            self.front.push_polygon(vertices, indicies);
-                        }
-                        PushResult::Ok => {}
+
+            // 逐个提取内容数据，再调用需要 &mut self 的方法
+            match &self.draw_cmds[idx as usize].content {
+                DrawContent::Quad { start_vert } => {
+                    let start = *start_vert as usize;
+                    // 构造固定数组，编译期安全
+                    let vertices = [
+                        self.prepared_vertices[start],
+                        self.prepared_vertices[start + 1],
+                        self.prepared_vertices[start + 2],
+                        self.prepared_vertices[start + 3],
+                    ];
+                    if let PushResult::Full = self.front.front.push_quad(&vertices) {
+                        Self::submit_and_draw(&mut self.front, ctx)?;
+                        self.front.front.push_quad(&vertices);
                     }
                 }
-                DrawContent::Quad { start_vert } => {
-                    let start_vert = *start_vert as usize;
-                    let vertices = &self.prepared_vertices[start_vert..start_vert+4];
-                    match self.front.push_quad(vertices) {
-                        PushResult::Full => {
-                            self.on_change_state(key.texture_id(), key.rstates_id())?;
-                            self.front.clear();
-                            self.front.push_quad(vertices);
-                        }
-                        PushResult::Ok => {}
+                DrawContent::Polygon {
+                    start_vert,
+                    vert_count,
+                    start_index,
+                    index_count,
+                } => {
+                    let s_vert = *start_vert as usize;
+                    let v_cnt = *vert_count as usize;
+                    let s_idx = *start_index as usize;
+                    let i_cnt = *index_count as usize;
+                    let vertices =
+                        &self.prepared_vertices[s_vert..s_vert + v_cnt];
+                    let indicies =
+                        &self.prepared_pindicies[s_idx..s_idx + i_cnt];
+                    if let PushResult::Full = self.front.front.push_polygon(vertices, indicies) {
+                        Self::submit_and_draw(&mut self.front, ctx)?;
+                        self.front.front.push_polygon(&vertices, &indicies);
                     }
+                }
+                DrawContent::Foreign(callback) => {
+                    let cb = callback.clone();
+                    Self::submit_and_draw(&mut self.front, ctx)?;
+                    cb(ctx, key);
+                    self.front.front.clear();
                 }
             }
         }
-        self.on_change_state(state_key.texture_id(), state_key.rstates_id())?;
-        self.front.clear();
+
+        // 提交最后一批
+        Self::submit_and_draw(&mut self.front, ctx)?;
         Ok(())
     }
 
-    /// 绘制后完全清除批处理内容
-    pub fn draw_flush(&mut self) {
-        self.draw_retain();
+    pub fn draw_flush(&mut self, ctx: &ID3D11DeviceContext) -> Result<()> {
+        let result = self.draw_retain(ctx);
         self.clear();
+        result
+    }
+}
+
+// 编译期检查：确保 DrawCmd 大小 <= 64 字节
+const _: () = {
+    assert!(
+        std::mem::size_of::<DrawCmd>() <= 64,
+        "DrawCmd size must be <= 64 bytes for SIMD efficiency"
+    );
+};
+
+impl Batch2D {
+    // ---------- 添加绘制命令（编译期安全） ----------
+
+    /// 添加四边形，闭包接收固定长度数组 [VertexP3U2C4; 4]
+    pub fn add_quad_by(&mut self, key: SortKey, f: impl FnOnce(&mut [VertexP3U2C4; 4])) {
+        let len = self.prepared_vertices.len();
+        self.prepared_vertices.resize(len + 4, VertexP3U2C4::default());
+        // 安全：长度固定为 4，try_into 不会失败
+        let arr: &mut [VertexP3U2C4; 4] = (&mut self.prepared_vertices[len..len + 4])
+            .try_into()
+            .unwrap();
+        f(arr);
+        self.add_cmd(DrawCmd {
+            key,
+            content: DrawContent::Quad { start_vert: len as u32 },
+        });
+    }
+
+    /// 添加多边形，debug 模式下会检查索引是否越界
+    pub fn add_polygon(
+        &mut self,
+        key: SortKey,
+        vertices: &[VertexP3U2C4],
+        indicies: &[[u16; 3]],
+    ) {
+        #[cfg(debug_assertions)]
+        if let Some(&max_idx) = indicies.iter().max() {
+            let a = |i| { debug_assert!(
+                max_idx[i] < vertices.len() as u16,
+                "Index out of bounds: max_idx={}, vertex_count={}",
+                max_idx[i],
+                vertices.len()
+            ) };
+            a(0);
+            a(1);
+            a(2);
+        }
+        debug_assert!(
+            vertices.len() <= u16::MAX as usize,
+            "Vertex count exceeds u16::MAX"
+        );
+
+        let vert_start = self.prepared_vertices.len();
+        self.prepared_vertices.extend_from_slice(vertices);
+        let idx_start = self.prepared_pindicies.len();
+        self.prepared_pindicies.extend_from_slice(bytemuck::cast_slice(indicies));
+        self.add_cmd(DrawCmd {
+            key,
+            content: DrawContent::Polygon {
+                start_vert: vert_start as u32,
+                vert_count: vertices.len() as u16,
+                start_index: idx_start as u32,
+                index_count: indicies.len() as u16,
+            },
+        });
+    }
+
+    /// 添加自定义绘制回调
+    pub fn add_foreign(
+        &mut self,
+        key: SortKey,
+        callback: Rc<dyn Fn(&ID3D11DeviceContext, SortKey)>,
+    ) {
+        self.add_cmd(DrawCmd {
+            key,
+            content: DrawContent::Foreign(callback),
+        });
     }
 
     fn add_cmd(&mut self, cmd: DrawCmd) {
-        assert!(self.draw_cmds.len() <= f32::MAX as usize);
-        assert!(self.prepared_vertices.len() <= f32::MAX as usize);
-        assert!(self.prepared_pindicies.len() <= f32::MAX as usize);
         self.cmd_idx.push(self.draw_cmds.len() as u32);
         self.draw_cmds.push(cmd);
-    }
-
-    /// `f` 传入的参数 `&mut [VertexP3U2C4]` 的长度一定是 `4`
-    pub fn add_quad_by(&mut self, k: SortKey, f: impl Fn(&mut [VertexP3U2C4])) {
-        self.prepared_vertices.reserve(4);
-        let len = self.prepared_vertices.len();
-        unsafe { self.prepared_vertices.set_len(len+4) };
-        f(&mut self.prepared_vertices[len..len+4]);
-        self.add_cmd(DrawCmd { key: k, content: DrawContent::Quad { start_vert: len as u32 }});
+        self.cmd_dirted = true;
     }
 }

@@ -28,6 +28,8 @@ pub mod test_triangle;
 #[allow(unused)]
 pub mod rstate;
 #[allow(unused)]
+pub mod resource_manager;
+#[allow(unused)]
 pub mod batch2d;
 
 use self::state_objects::StateObjects;
