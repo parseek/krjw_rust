@@ -3,6 +3,8 @@
 //! 所有字段的偏移量和位数均以 `const` 常量声明，便于扩展。
 //! 编译期静态断言确保无重叠且总位数 ≤ 32。
 
+use crate::graphic::d3d11::rstate::{RStateBuilder, builder::{self, BuilderState}};
+
 use super::enums::*;
 
 // ============================================================================
@@ -172,6 +174,10 @@ impl RState {
     pub fn stencil_mode(&self) -> Option<StencilMode> {
         if self.is_advanced() { None }
         else { StencilMode::try_from(self.stencil_idx()).ok() }
+    }
+
+    pub fn new_basic_builder() -> RStateBuilder<builder::Basic> {
+        RStateBuilder::new()
     }
 }
 
