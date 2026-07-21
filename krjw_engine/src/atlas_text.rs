@@ -426,6 +426,7 @@ impl AtlasText {
         Render::new(&[
             Source::ColorOutline(0),
             Source::ColorBitmap(swash::scale::StrikeWith::BestFit),
+            // Source::Bitmap(swash::scale::StrikeWith::ExactSize), // 位图字体 Swash 会出 Bug
             Source::Outline,
         ])
         .format(Format::Alpha)

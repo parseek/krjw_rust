@@ -79,6 +79,7 @@ pub struct App {
     pub hovered_tile: Option<usize>,
     pub grid_spacing: f32,
     pub font_name: String,
+    pub font_size: f32,
     pub custom_text: String,
 }
 
@@ -106,6 +107,7 @@ impl App {
             hovered_tile: None,
             grid_spacing: GRID_SPACING,
             font_name: "SimHei".to_string(),
+            font_size: 24.0,
             custom_text: String::new(),
         }
     }
@@ -154,6 +156,7 @@ impl App {
         self.font_name = font_name;
         self.custom_text = std::env::var("RJW_TEXT")
             .unwrap_or("😂😂😊😂❤🌹😆😖🥪🥗🥞🥟🥩🍚🍤\n🛬✈🚊🚈🚝🚹🟧🟨🟩🟦🟪🟫⬛⬜🔹".to_string());
+        self.font_size = std::env::var("RJW_FONTSIZE").unwrap_or("0.0".to_string()).parse().unwrap_or(24.0);
 
         self.ctx = Some(AppContext {
             window,
@@ -685,7 +688,7 @@ impl App {
         ctx.sprite_buf.clear();
         let layout = ctx.atlas_text.layout_text(
             &text_to_display,
-            Metrics::new(24.0, 32.0),
+            Metrics::new(self.font_size, self.font_size*1.5),
             Attrs::new().family(Family::Name(&self.font_name)),
             &gfx.device,
         )?;
