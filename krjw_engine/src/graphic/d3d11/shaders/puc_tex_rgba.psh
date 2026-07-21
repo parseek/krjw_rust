@@ -1,0 +1,6 @@
+
+#include "batch2d.hlsli"
+
+float4 main(PSIn_PUC ps_in) : SV_Target {
+    return base_tex.Sample(base_sampler, ps_in.uv) * ps_in.color;
+}

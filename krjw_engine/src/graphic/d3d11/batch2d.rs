@@ -313,7 +313,7 @@ fn gen_quad_indicies() -> Box<[[u16; 6]; DRAWPAGE_CAPACITY_TRIANGLES/2]> {
 impl Front {
     fn new(device: &ID3D11Device) -> Result<Self> {
         let vertex_buffer = d3d11_utils::create_dynamic_buffer(device, (DRAWPAGE_CAPACITY_TRIANGLES * 3 * size_of::<VertexP3U2C4>()) as u32, D3D11_BIND_VERTEX_BUFFER.0 as u32)?;
-        let input_layout = d3d11_utils::create_input_layout(device, &INPUT_LAYOUT_PUC, include_bytes!("shaders/vs_p3u2c4_layout.cso"))?;
+        let input_layout = d3d11_utils::create_input_layout(device, &INPUT_LAYOUT_PUC, include_bytes!("shaders/p3u2c4_layout.vs.cso"))?;
         let poly_index_buffer = d3d11_utils::create_dynamic_buffer(device, (DRAWPAGE_CAPACITY_TRIANGLES * 3 * size_of::<u16>()) as u32, D3D11_BIND_INDEX_BUFFER.0 as u32)?;
         let quad_index_buffer = d3d11_utils::create_immutable_buffer(device, bytemuck::cast_slice(gen_quad_indicies().as_slice()), D3D11_BIND_INDEX_BUFFER.0 as u32)?;
         let front = BeginToDraw::new();
