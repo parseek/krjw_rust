@@ -4,6 +4,8 @@
 //! 更新输入状态和窗口状态，为 App 线程提供访问器。
 
 use anyhow::Result;
+use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::window::Window;
 use std::sync::mpsc::Receiver;
 
 use super::keyboard_input::KeyboardInput;
@@ -22,6 +24,12 @@ pub struct FrameEvents {
     pub disconnected: bool,
 }
 
+impl FrameEvents {
+    pub fn to_quit(&self) -> bool {
+        self.close_requested || self.disconnected
+    }
+}
+
 /// Receives and processes all window/input events from the main thread,
 /// and exposes the resulting input state and window geometry for one frame.
 /// 从主线程接收并处理所有窗口/输入事件，
@@ -38,26 +46,29 @@ pub struct EventDriver {
 impl EventDriver {
     /// Create a new `EventDriver` that reads from the given channel.
     /// 创建一个从给定通道读取事件的 `EventDriver`。
-    pub fn new(rx: Receiver<AppMsg>) -> Self {
+    pub fn new(rx: Receiver<AppMsg>, window: &Window) -> Self {
+        let PhysicalSize { width, height } = window.inner_size();
+        let PhysicalPosition { x, y } = window.outer_position().unwrap_or_default();
         Self {
             rx,
             keyboard_input: KeyboardInput::default(),
             mouse_input: MouseInput::default(),
-            window_pos: (0, 0),
-            window_size: (0, 0),
+            window_pos: (x, y),
+            window_size: (width, height),
             window_size_dirty: false,
         }
     }
 
+    // 该方法不安全
     /// Set the initial window size (called once after window creation).
     /// 设置初始窗口大小（窗口创建后调用一次）。
-    pub fn set_initial_window_size(&mut self, w: u32, h: u32) {
-        self.window_size = (w, h);
-    }
+    // pub fn set_initial_window_size(&mut self, w: u32, h: u32) {
+    //     self.window_size = (w, h);
+    // }
 
-    /// Drain all pending messages from the channel and update internal state.
-    /// Returns a summary of frame-level events.
-    /// 从通道中取出所有待处理消息并更新内部状态。
+    /// Drain all pending messages from the channel and update internal state.\
+    /// Returns a summary of frame-level events.\
+    /// 从通道中取出所有待处理消息并更新内部状态。\
     /// 返回帧级别的事件摘要。
     pub fn poll_frame(&mut self) -> FrameEvents {
         let mut close_requested = false;

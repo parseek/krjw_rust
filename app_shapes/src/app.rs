@@ -85,8 +85,7 @@ impl App {
             .unwrap_or_else(|e| panic!("gfx::init: {:#}", e));
         let size = window.inner_size();
 
-        let mut driver = EventDriver::new(rx);
-        driver.set_initial_window_size(size.width, size.height);
+        let mut driver = EventDriver::new(rx, &window);
 
         let batch = SpriteBatch2D::new(
             &gfx.device, 1024,

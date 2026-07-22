@@ -128,11 +128,8 @@ impl App {
         let gfx = D3D11::init_on_hwnd(hwnd)
             .unwrap_or_else(|e| panic!("gfx::init: {:#}", e));
 
-        let size = window.inner_size();
-
         // ── Event driver ──
-        let mut driver = EventDriver::new(rx);
-        driver.set_initial_window_size(size.width, size.height);
+        let mut driver = EventDriver::new(rx, &window);
 
         // ── Audio ──
         let audio_mgr = self.init_audio()?;

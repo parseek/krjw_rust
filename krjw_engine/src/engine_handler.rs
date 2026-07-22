@@ -13,6 +13,8 @@ use winit::window::WindowAttributes;
 use crate::msg::AppMsg;
 use crate::mouse_input::MouseButton;
 
+pub type AppMsgReceiver = mpsc::Receiver<AppMsg>;
+
 /// Generic main-thread handler that holds the channel sender and thread handle.
 /// 通用主线程处理器——持有通道发送端和线程句柄。
 ///
@@ -27,7 +29,7 @@ pub struct EngineHandler {
     exit_requested: bool,
     /// Closure to initialise and run the application on a dedicated thread.
     /// 在专用线程上初始化和运行应用的闭包。
-    app_init: Option<Box<dyn FnOnce(winit::window::Window, isize, mpsc::Receiver<AppMsg>) -> anyhow::Result<()> + Send>>,
+    app_init: Option<Box<dyn FnOnce(winit::window::Window, isize, AppMsgReceiver) -> anyhow::Result<()> + Send>>,
     init_window_attrib: WindowAttributes,
 }
 
@@ -35,7 +37,7 @@ impl EngineHandler {
     /// Create a new `EngineHandler` with the given application initialiser.
     /// 用给定的应用初始化器创建 `EngineHandler`。
     pub fn new(
-        init_window_attrib: WindowAttributes, app_init: impl FnOnce(winit::window::Window, isize, mpsc::Receiver<AppMsg>) -> anyhow::Result<()> + Send + 'static,
+        init_window_attrib: WindowAttributes, app_init: impl FnOnce(winit::window::Window, isize, AppMsgReceiver) -> anyhow::Result<()> + Send + 'static,
     ) -> Self {
         Self {
             msg_queue: None,
@@ -187,7 +189,7 @@ impl Drop for EngineHandler {
     }
 }
 
-pub fn run_app(window_attrib: WindowAttributes, app_init: impl FnOnce(winit::window::Window, isize, mpsc::Receiver<AppMsg>) -> anyhow::Result<()> + Send + 'static) -> Result<()> {
+pub fn run_app(window_attrib: WindowAttributes, app_init: impl FnOnce(winit::window::Window, isize, AppMsgReceiver) -> anyhow::Result<()> + Send + 'static) -> Result<()> {
     use anyhow::Context;
     let event_loop = EventLoop::new()
         .context("Failed to create event loop")?;

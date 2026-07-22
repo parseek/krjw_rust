@@ -827,8 +827,7 @@ impl App {
         let gfx = D3D11::init_on_hwnd(hwnd)?;
         let size = window.inner_size();
 
-        let mut driver = EventDriver::new(rx);
-        driver.set_initial_window_size(size.width, size.height);
+        let driver = EventDriver::new(rx, &window);
 
         let sprite_batch = SpriteBatch2D::new(&gfx.device, 2048, &gfx.states.vs_puc_m_2d, &gfx.states.ps_tex_rgba_2d, &gfx.states.input_layout_puc)?;
         let shape_batch = ShapeBatch2D::new(&gfx.device, 4096, &gfx.states.vs_puc_m_2d, &gfx.states.ps_solid_2d, &gfx.states.input_layout_puc)?;
