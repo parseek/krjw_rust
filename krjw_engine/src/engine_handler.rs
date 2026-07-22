@@ -4,8 +4,10 @@
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
+use anyhow::Result;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowAttributes;
 
 use crate::msg::AppMsg;
@@ -183,4 +185,15 @@ impl Drop for EngineHandler {
             }
         }
     }
+}
+
+pub fn run_app(window_attrib: WindowAttributes, app_init: impl FnOnce(winit::window::Window, isize, mpsc::Receiver<AppMsg>) -> anyhow::Result<()> + Send + 'static) -> Result<()> {
+    use anyhow::Context;
+    let event_loop = EventLoop::new()
+        .context("Failed to create event loop")?;
+    event_loop.set_control_flow(ControlFlow::Poll);
+    let mut handler = EngineHandler::new( window_attrib, app_init );
+    event_loop
+        .run_app(&mut handler)
+        .context("Failed to run event loop: {}")
 }
