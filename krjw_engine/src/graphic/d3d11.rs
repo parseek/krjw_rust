@@ -15,24 +15,32 @@ use winit::{raw_window_handle::HasWindowHandle, window::Window};
 
 #[allow(unused)]
 pub mod d3d11_utils;
+pub use d3d11_utils::TextureInfo;
 #[allow(unused)]
 pub mod shape_batch_2d;
+pub use shape_batch_2d::ShapeBatch2D;
 #[allow(unused)]
 pub mod sprite_batch_2d;
+pub use sprite_batch_2d::SpriteBatch2D;
 #[allow(unused)]
 pub mod state_objects;
+pub use state_objects::StateObjects;
 #[allow(unused)]
 pub mod test_sprite;
+pub use test_sprite::TestSpriteRender;
 #[allow(unused)]
 pub mod test_triangle;
+pub use test_triangle::TestTriangleRender;
 #[allow(unused)]
 pub mod rstate;
+pub use rstate::RState;
+pub use rstate::RStateBuilder;
 #[allow(unused)]
 pub mod resource_manager;
+pub use resource_manager::ResourceManager;
 #[allow(unused)]
 pub mod batch2d;
-
-use self::state_objects::StateObjects;
+pub use batch2d::Batch2D;
 
 #[derive(Debug)]
 pub struct D3D11 {
