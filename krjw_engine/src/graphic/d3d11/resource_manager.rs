@@ -277,21 +277,21 @@ impl ResourceManager {
                 rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
                 rt.BlendEnable = true.into();
             }
-            1 => { // Additive: One, One
-                rt.SrcBlend = D3D11_BLEND_ONE;
+            1 => { // Additive (transparent version): SrcAlpha, One
+                rt.SrcBlend = D3D11_BLEND_SRC_ALPHA;   // 原为 ONE，现改为 SRC_ALPHA 使透明生效
                 rt.DestBlend = D3D11_BLEND_ONE;
                 rt.BlendOp = D3D11_BLEND_OP_ADD;
-                rt.SrcBlendAlpha = D3D11_BLEND_ONE;
+                rt.SrcBlendAlpha = D3D11_BLEND_ONE;    // Alpha 仍然叠加
                 rt.DestBlendAlpha = D3D11_BLEND_ONE;
                 rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
                 rt.BlendEnable = true.into();
             }
-            2 => { // Multiply: Zero, SrcColor
-                rt.SrcBlend = D3D11_BLEND_ZERO;
-                rt.DestBlend = D3D11_BLEND_SRC_COLOR;
+            2 => { // Multiply (opaque modulation): Zero, SrcAlpha
+                rt.SrcBlend = D3D11_BLEND_DEST_COLOR;
+                rt.DestBlend = D3D11_BLEND_ZERO;  // 原为 SRC_COLOR，改为 SRC_ALPHA 使透明生效
                 rt.BlendOp = D3D11_BLEND_OP_ADD;
                 rt.SrcBlendAlpha = D3D11_BLEND_ZERO;
-                rt.DestBlendAlpha = D3D11_BLEND_SRC_COLOR;
+                rt.DestBlendAlpha = D3D11_BLEND_SRC_ALPHA; // 保持与 RGB 一致
                 rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
                 rt.BlendEnable = true.into();
             }
@@ -322,7 +322,7 @@ impl ResourceManager {
                 rt.BlendOpAlpha = D3D11_BLEND_OP_REV_SUBTRACT;
                 rt.BlendEnable = true.into();
             }
-            6 => { // Min
+            6 => { // Min (does not support transparency, keep as is)
                 rt.SrcBlend = D3D11_BLEND_ONE;
                 rt.DestBlend = D3D11_BLEND_ONE;
                 rt.BlendOp = D3D11_BLEND_OP_MIN;
@@ -331,7 +331,7 @@ impl ResourceManager {
                 rt.BlendOpAlpha = D3D11_BLEND_OP_MIN;
                 rt.BlendEnable = true.into();
             }
-            7 => { // Max
+            7 => { // Max (does not support transparency, keep as is)
                 rt.SrcBlend = D3D11_BLEND_ONE;
                 rt.DestBlend = D3D11_BLEND_ONE;
                 rt.BlendOp = D3D11_BLEND_OP_MAX;
@@ -349,11 +349,11 @@ impl ResourceManager {
                 rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
                 rt.BlendEnable = false.into();
             }
-            9 => { // Invert: InvDstColor, Zero
+            9 => { // Invert (keep effect, but alpha channel fixed to preserve source alpha)
                 rt.SrcBlend = D3D11_BLEND_INV_DEST_COLOR;
                 rt.DestBlend = D3D11_BLEND_ZERO;
                 rt.BlendOp = D3D11_BLEND_OP_ADD;
-                rt.SrcBlendAlpha = D3D11_BLEND_INV_DEST_COLOR;
+                rt.SrcBlendAlpha = D3D11_BLEND_ONE;  // 已修正：保留原 Alpha
                 rt.DestBlendAlpha = D3D11_BLEND_ZERO;
                 rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
                 rt.BlendEnable = true.into();

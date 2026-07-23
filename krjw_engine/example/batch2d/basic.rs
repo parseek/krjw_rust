@@ -26,7 +26,7 @@ const PRELOAD_TEXTURES: &[(&str, &[u8])] = &[
 ];
 
 struct App {
-    window: Window,
+    _window: Window,
     event: EventDriver,
     gfx: D3D11,
     timer: Timer,
@@ -80,7 +80,7 @@ impl App {
         let batch = Batch2D::new(gfx.device.clone(), rs_mgr.clone())?;
 
         Ok(Self {
-            window,
+            _window: window,
             event,
             gfx,
             sp_parts: ResourcePool::new(),
