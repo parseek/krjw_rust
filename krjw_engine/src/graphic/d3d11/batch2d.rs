@@ -559,7 +559,7 @@ impl Batch2D {
     // ---------- 添加绘制命令（编译期安全） ----------
 
     /// 添加四边形，闭包接收固定长度数组 [VertexP3U2C4; 4]
-    pub fn add_quad_by(&mut self, key: SortKey, f: impl FnOnce(&mut [VertexP3U2C4; 4])) {
+    pub fn add_quad_by(&mut self, key: SortKey, f: impl Fn(&mut [VertexP3U2C4; 4])) {
         let len = self.prepared_vertices.len();
         self.prepared_vertices.resize(len + 4, VertexP3U2C4::default());
         // 安全：长度固定为 4，try_into 不会失败
