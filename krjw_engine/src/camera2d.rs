@@ -4,6 +4,7 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 ///
 /// Handles the View-Projection matrix and coordinates conversion between
 /// screen space (pixels) and world space.
+#[derive(Default, Debug, Clone, Copy)]
 pub struct Camera2D {
     /// Camera position in world space.
     pub position: Vec2,
