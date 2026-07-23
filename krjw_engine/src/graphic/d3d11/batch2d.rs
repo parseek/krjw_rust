@@ -4,7 +4,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use anyhow::Result;
+use glam::{Vec2, Mat4};
 use windows::core::PCSTR;
+use crate::krjw_vecf;
 use crate::platform::direct3d11::*;
 
 use super::rstate::*;
@@ -257,6 +259,15 @@ struct Front {
     /// `P3U2C4` 的 `Layout`
     pub(super) input_layout: ID3D11InputLayout,
 
+    /// 内置顶点着色器（p3u2c4_m.vsh.cso）
+    pub(super) vertex_shader: ID3D11VertexShader,
+
+    /// 内置像素着色器（puc_tex_rgba.psh.cso）
+    pub(super) pixel_shader: ID3D11PixelShader,
+
+    /// MVP 常量缓冲区（slot b0）
+    pub(super) cb_world: ID3D11Buffer,
+
     /// 通用动态顶点缓冲
     pub(super) vertex_buffer: ID3D11Buffer,
 
@@ -300,6 +311,12 @@ const INPUT_LAYOUT_PUC: [D3D11_INPUT_ELEMENT_DESC; 3] = [
     },
 ];
 
+/// 用于 MVP 的 CBuffer 结构
+#[repr(C)]
+struct CbWorld {
+    mvp: Mat4,
+}
+
 const _:() = { assert!(DRAWPAGE_CAPACITY_TRIANGLES % 2 == 0) };
 
 fn gen_quad_indicies() -> Box<[[u16; 6]; DRAWPAGE_CAPACITY_TRIANGLES/2]> {
@@ -312,12 +329,33 @@ fn gen_quad_indicies() -> Box<[[u16; 6]; DRAWPAGE_CAPACITY_TRIANGLES/2]> {
 
 impl Front {
     fn new(device: &ID3D11Device) -> Result<Self> {
+        // 从 CSO 字节码直接创建着色器
+        let vs_cso = include_bytes!("shaders/p3u2c4_m.vsh.cso");
+        let mut vs: Option<ID3D11VertexShader> = None;
+        unsafe {
+            device
+                .CreateVertexShader(vs_cso, None, Some(&mut vs))
+                .map_err(|e| anyhow::anyhow!("Failed to create Batch2D VS from CSO: {:?}", e))?;
+        }
+        let ps_cso = include_bytes!("shaders/puc_tex_rgba.psh.cso");
+        let mut ps: Option<ID3D11PixelShader> = None;
+        unsafe {
+            device
+                .CreatePixelShader(ps_cso, None, Some(&mut ps))
+                .map_err(|e| anyhow::anyhow!("Failed to create Batch2D PS from CSO: {:?}", e))?;
+        }
+        let vertex_shader = vs.unwrap();
+        let pixel_shader = ps.unwrap();
+        let cb_world = d3d11_utils::create_constant_buffer::<CbWorld>(device)?;
         let vertex_buffer = d3d11_utils::create_dynamic_buffer(device, (DRAWPAGE_CAPACITY_TRIANGLES * 3 * size_of::<VertexP3U2C4>()) as u32, D3D11_BIND_VERTEX_BUFFER.0 as u32)?;
         let input_layout = d3d11_utils::create_input_layout(device, &INPUT_LAYOUT_PUC, include_bytes!("shaders/p3u2c4_layout.vsh.cso"))?;
         let poly_index_buffer = d3d11_utils::create_dynamic_buffer(device, (DRAWPAGE_CAPACITY_TRIANGLES * 3 * size_of::<u16>()) as u32, D3D11_BIND_INDEX_BUFFER.0 as u32)?;
         let quad_index_buffer = d3d11_utils::create_immutable_buffer(device, bytemuck::cast_slice(gen_quad_indicies().as_slice()), D3D11_BIND_INDEX_BUFFER.0 as u32)?;
         let front = BeginToDraw::new();
         Ok(Self {
+            vertex_shader,
+            pixel_shader,
+            cb_world,
             vertex_buffer,
             input_layout,
             poly_index_buffer,
@@ -397,7 +435,11 @@ impl Batch2D {
         self.cmd_dirted = false;
     }
 
-    
+    /// 设置 MVP 矩阵并写入 GPU 常量缓冲区
+    pub fn set_mvp(&self, ctx: &ID3D11DeviceContext, mvp: &Mat4) {
+        d3d11_utils::write_buffer(ctx, &self.front.cb_world, &[CbWorld { mvp: *mvp }])
+            .expect("Batch2D::set_mvp failed");
+    }
 
     // ---------- 提交与绘制 ----------
 
@@ -419,6 +461,13 @@ impl Batch2D {
                 Some([std::mem::size_of::<VertexP3U2C4>() as u32].as_ptr()),
                 Some([0_u32].as_ptr()),
             );
+
+            // 绑定内置着色器
+            ctx.VSSetShader(&front.vertex_shader, None);
+            ctx.PSSetShader(&front.pixel_shader, None);
+            ctx.VSSetConstantBuffers(0, Some(&[Some(front.cb_world.clone())]));
+
+            // 纹理绑定由 draw_retain 在调用 submit_and_draw 前设置
         }
 
         // 写入顶点数据
@@ -464,11 +513,14 @@ impl Batch2D {
         }
 
         let mut last_foreign = false;
+        // 追踪当前纹理 ID，在切换时绑定新纹理
+        let mut current_tex_id: Option<u32> = None;
 
 
         for &idx in &self.cmd_idx {
             let key = self.draw_cmds[idx as usize].key;
             let rstate = key.rstate();
+            let tex_id = key.texture_id().0;
 
             let content = &self.draw_cmds[idx as usize].content;
             if last_foreign { if let DrawContent::Foreign(_) = content {} else {
@@ -490,6 +542,28 @@ impl Batch2D {
                     self.manager.lock().unwrap().bind_advanced_state(ctx, rstate);
                 }
                 current_rstate = rstate;
+            }
+
+            // 纹理切换（在同一个 rstate 组内也可能不同纹理）
+            if tex_id != current_tex_id.unwrap_or(0) {
+                // 提交当前批次，因为纹理不同不能合批
+                Self::submit_and_draw(&mut self.front, ctx)?;
+
+                // 绑定新纹理
+                let manager = self.manager.lock().unwrap();
+                if let Some(tex_info) = manager.get_texture_by_id(tex_id) {
+                    unsafe {
+                        ctx.PSSetShaderResources(0, Some(&[Some(tex_info.srv.clone())]));
+                    }
+                } else {
+                    // 纹理不存在，用白色纹理
+                    if let Some(white) = manager.get_texture_by_id(manager.white_tex_id) {
+                        unsafe {
+                            ctx.PSSetShaderResources(0, Some(&[Some(white.srv.clone())]));
+                        }
+                    }
+                }
+                current_tex_id = Some(tex_id);
             }
 
             // 逐个提取内容数据，再调用需要 &mut self 的方法
@@ -544,6 +618,12 @@ impl Batch2D {
         let result = self.draw_retain(ctx);
         self.clear();
         result
+    }
+
+    fn add_cmd(&mut self, cmd: DrawCmd) {
+        self.cmd_idx.push(self.draw_cmds.len() as u32);
+        self.draw_cmds.push(cmd);
+        self.cmd_dirted = true;
     }
 }
 
@@ -620,9 +700,56 @@ impl Batch2D {
         });
     }
 
-    fn add_cmd(&mut self, cmd: DrawCmd) {
-        self.cmd_idx.push(self.draw_cmds.len() as u32);
-        self.draw_cmds.push(cmd);
-        self.cmd_dirted = true;
+    /// 添加精灵 \
+    /// `inv_tex_size`：纹理大小的倒数（1/width, 1/height），用于将 UV 像素坐标归一化 \
+    pub fn add_sprite(&mut self, sprite: &crate::Sprite2D, transform: &crate::Transform2D, color: impl Into<crate::ColorRGBA>, key: SortKey, z_buf: f32, inv_tex_size: Vec2) {
+        let color = color.into();
+        let color: [f32; 4] = color.into_list();
+        self.add_quad_by(key, |verts| {
+            let t = -sprite.origin_px.y;
+            let l = -sprite.origin_px.x;
+            let b = sprite.size_px.y + t;
+            let r = sprite.size_px.x + l;
+            verts[0].pos = [l, t, z_buf];
+            verts[1].pos = [r, t, z_buf];
+            verts[2].pos = [l, b, z_buf];
+            verts[3].pos = [r, b, z_buf];
+            // UV 归一化：像素坐标 * inv_tex_size
+            let t = sprite.uv_tl_px.y * inv_tex_size.y;
+            let l = sprite.uv_tl_px.x * inv_tex_size.x;
+            let b = (sprite.uv_size_px.y + sprite.uv_tl_px.y) * inv_tex_size.y;
+            let r = (sprite.uv_size_px.x + sprite.uv_tl_px.x) * inv_tex_size.x;
+            verts[0].uv = [l, t];
+            verts[1].uv = [r, t];
+            verts[2].uv = [l, b];
+            verts[3].uv = [r, b];
+            for i in verts.iter_mut() {
+                i.color = color;
+                let p = transform.transform_point(krjw_vecf!(i.pos[0], i.pos[1]));
+                i.pos[0..2].copy_from_slice(&[p.x, p.y])
+            }
+        });
+    }
+
+    /// 添加精灵（无 UV，纯色矩形） \
+    pub fn add_origined_rect_nouv(&mut self, size: glam::Vec2, origin: glam::Vec2, transform: &crate::Transform2D, color: impl Into<crate::ColorRGBA>, key: SortKey, z_buf: f32) {
+        let color = color.into();
+        let color: [f32; 4] = color.into_list();
+        self.add_quad_by(key, |verts| {
+            let t = -origin.y;
+            let l = -origin.x;
+            let b = size.y + t;
+            let r = size.x + l;
+            verts[0].pos = [l, t, z_buf];
+            verts[1].pos = [r, t, z_buf];
+            verts[2].pos = [l, b, z_buf];
+            verts[3].pos = [r, b, z_buf];
+            for i in verts.iter_mut() {
+                i.color = color;
+                i.uv = [0.; 2];
+                let p = transform.transform_point(krjw_vecf!(i.pos[0], i.pos[1]));
+                i.pos[0..1].copy_from_slice(&[p.x, p.y])
+            }
+        });
     }
 }

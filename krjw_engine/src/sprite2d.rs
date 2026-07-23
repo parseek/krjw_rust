@@ -14,6 +14,8 @@ use std::cmp::Ordering;
 
 use glam::Vec2;
 
+use crate::krjw_vecf_splat;
+
 /// Trait for types that expose a unique 64-bit identifier.
 /// 为类型提供唯一 64 位标识符的 trait。
 ///
@@ -25,17 +27,17 @@ pub trait HaveID {
     fn get_id(&self) -> u64;
 }
 
-/// A 2D sprite descriptor — defines a sub-rectangle of a texture (UV) and an origin point.
-/// 2D 精灵描述符——定义纹理的子矩形（UV）和原点。
+/// A 2D sprite descriptor — defines a sub-rectangle of a texture (UV) and an origin point. \
+/// 2D 精灵描述符——定义纹理的子矩形（UV）和原点。 \
 ///
-/// All values are in **pixel** units (not normalized UV).
-/// 所有值均以**像素**为单位（非归一化 UV）。
+/// All values are in **pixel** units (not normalized UV). \
+/// 所有值均以**像素**为单位（非归一化 UV）。 \
 ///
-/// # Fields / 字段
+/// ### Fields / 字段 
 ///
-/// * `origin_px` — origin/pivot point in pixels (e.g. center: `size_px * 0.5`) / 原点/轴点（像素）
-/// * `size_px` — rendered size in pixels / 渲染尺寸（像素）
-/// * `uv_tl_px` — top-left UV coordinate in pixels into the source texture / 源纹理左上角 UV（像素）
+/// * `origin_px` — origin/pivot point in pixels (e.g. center: `size_px * 0.5`) / 原点/轴点（像素） \
+/// * `size_px` — rendered size in pixels / 渲染尺寸（像素） \
+/// * `uv_tl_px` — top-left UV coordinate in pixels into the source texture / 源纹理左上角 UV（像素） \
 /// * `uv_size_px` — UV rectangle size in pixels / UV 矩形尺寸（像素）
 #[derive(Clone, Copy, Debug)]
 pub struct Sprite2D {
@@ -43,6 +45,23 @@ pub struct Sprite2D {
     pub size_px: Vec2,
     pub uv_tl_px: Vec2,
     pub uv_size_px: Vec2,
+}
+
+impl Sprite2D {
+    pub fn from_uv(uv_tl_px: Vec2, uv_size_px: Vec2) -> Self {
+        Self {
+            uv_tl_px,
+            uv_size_px,
+            size_px: uv_size_px,
+            origin_px: krjw_vecf_splat!(0, 2),
+        }
+    }
+    pub fn with_origin(self, origin_px: Vec2) -> Self {
+        Self {
+            origin_px,
+            ..self
+        }
+    }
 }
 
 /// A fully-typed sprite object stored in `Sprite2DBuffer`.

@@ -4,7 +4,7 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 ///
 /// Handles the View-Projection matrix and coordinates conversion between
 /// screen space (pixels) and world space.
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Camera2D {
     /// Camera position in world space.
     pub position: Vec2,
@@ -16,6 +16,12 @@ pub struct Camera2D {
     pub viewport_pos: Vec2,
     /// Size of the viewport in pixels.
     pub viewport_size: Vec2,
+}
+
+impl Default for Camera2D {
+    fn default() -> Self {
+        Self { position: Vec2::ZERO, rotation: 0.0, zoom: Vec2::ONE, viewport_pos: Vec2::ZERO, viewport_size: Vec2::ZERO }
+    }
 }
 
 #[allow(unused)]

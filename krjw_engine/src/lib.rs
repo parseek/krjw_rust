@@ -25,6 +25,8 @@ pub mod atlas_text;
 pub mod timer;
 #[allow(unused)]
 pub mod macros;
+#[allow(unused)]
+pub mod color;
 
 // ── Re-exports ─────────────────────────────────────────────
 
@@ -40,6 +42,7 @@ pub use camera2d::Camera2D;
 pub use collider::{Collider, ColliderInstance};
 pub use atlas_text::AtlasText;
 pub use timer::Timer;
+pub use color::ColorRGBA;
 
 pub use graphic::d3d11::D3D11;
 pub use graphic::d3d11::d3d11_utils::TextureInfo;

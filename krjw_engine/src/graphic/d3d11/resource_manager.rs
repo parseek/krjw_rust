@@ -6,10 +6,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use anyhow::Result;
-use windows::Win32::Graphics::Direct3D11::*;
+use glam::Vec2;
+use windows::Win32::Graphics::{Direct3D::*, Direct3D11::*, Dxgi::Common::*};
 
 use crate::{TextureInfo};
 
+use super::d3d11_utils::{self, create_texture_2d, create_srv};
 use super::rstate::*;
 
 // ============================================================================
@@ -134,11 +136,14 @@ pub struct ResourceManager {
     basic_depth_stencil_states: [Option<ID3D11DepthStencilState>; 16],
 
     next_advanced_id: u32,
+
+    /// 默认 1×1 白色纹理的 ID（在 textures pool 中）
+    pub white_tex_id: u32,
 }
 
 impl ResourceManager {
     pub fn new(device: ID3D11Device) -> Self {
-        Self {
+        let mut this = Self {
             device,
             textures: ResourcePool::new(),
             vertex_shaders: ResourcePool::new(),
@@ -157,7 +162,35 @@ impl ResourceManager {
             basic_rasterizer_states: [None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None],
             basic_depth_stencil_states: [None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None],
             next_advanced_id: 1,
-        }
+            white_tex_id: 0,
+        };
+
+        // 创建默认的 1×1 白色 RGBA 纹理
+        let white_pixel: [u8; 4] = [255; 4];
+        let tex = create_texture_2d(
+            &this.device,
+            1,
+            1,
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            D3D11_USAGE_IMMUTABLE,
+            0,
+            Some((&white_pixel, 4)),
+        )
+        .expect("Failed to create default white texture");
+        let srv = create_srv(&this.device, &tex, DXGI_FORMAT_R8G8B8A8_UNORM)
+            .expect("Failed to create SRV for default white texture");
+        let tex_info = Arc::new(TextureInfo {
+            texture: tex,
+            srv,
+            width: 1,
+            height: 1,
+            size_inv: Vec2::ONE,
+            format: DXGI_FORMAT_R8G8B8A8_UNORM,
+        });
+        this.white_tex_id = this.textures.insert("_white", tex_info);
+
+        this
     }
 
     // ---------- Basic 状态懒加载 ----------
@@ -239,51 +272,91 @@ impl ResourceManager {
                 rt.SrcBlend = D3D11_BLEND_SRC_ALPHA;
                 rt.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
                 rt.BlendOp = D3D11_BLEND_OP_ADD;
+                rt.SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
+                rt.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+                rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+                rt.BlendEnable = true.into();
             }
             1 => { // Additive: One, One
                 rt.SrcBlend = D3D11_BLEND_ONE;
                 rt.DestBlend = D3D11_BLEND_ONE;
                 rt.BlendOp = D3D11_BLEND_OP_ADD;
+                rt.SrcBlendAlpha = D3D11_BLEND_ONE;
+                rt.DestBlendAlpha = D3D11_BLEND_ONE;
+                rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+                rt.BlendEnable = true.into();
             }
             2 => { // Multiply: Zero, SrcColor
                 rt.SrcBlend = D3D11_BLEND_ZERO;
                 rt.DestBlend = D3D11_BLEND_SRC_COLOR;
                 rt.BlendOp = D3D11_BLEND_OP_ADD;
+                rt.SrcBlendAlpha = D3D11_BLEND_ZERO;
+                rt.DestBlendAlpha = D3D11_BLEND_SRC_COLOR;
+                rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+                rt.BlendEnable = true.into();
             }
             3 => { // Premultiplied: One, InvSrcAlpha
                 rt.SrcBlend = D3D11_BLEND_ONE;
                 rt.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
                 rt.BlendOp = D3D11_BLEND_OP_ADD;
+                rt.SrcBlendAlpha = D3D11_BLEND_ONE;
+                rt.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+                rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+                rt.BlendEnable = true.into();
             }
             4 => { // Subtract: SrcAlpha, InvSrcAlpha, SUBTRACT
                 rt.SrcBlend = D3D11_BLEND_SRC_ALPHA;
                 rt.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
                 rt.BlendOp = D3D11_BLEND_OP_SUBTRACT;
+                rt.SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
+                rt.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+                rt.BlendOpAlpha = D3D11_BLEND_OP_SUBTRACT;
+                rt.BlendEnable = true.into();
             }
             5 => { // ReverseSubtract
                 rt.SrcBlend = D3D11_BLEND_SRC_ALPHA;
                 rt.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
                 rt.BlendOp = D3D11_BLEND_OP_REV_SUBTRACT;
+                rt.SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
+                rt.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+                rt.BlendOpAlpha = D3D11_BLEND_OP_REV_SUBTRACT;
+                rt.BlendEnable = true.into();
             }
             6 => { // Min
                 rt.SrcBlend = D3D11_BLEND_ONE;
                 rt.DestBlend = D3D11_BLEND_ONE;
                 rt.BlendOp = D3D11_BLEND_OP_MIN;
+                rt.SrcBlendAlpha = D3D11_BLEND_ONE;
+                rt.DestBlendAlpha = D3D11_BLEND_ONE;
+                rt.BlendOpAlpha = D3D11_BLEND_OP_MIN;
+                rt.BlendEnable = true.into();
             }
             7 => { // Max
                 rt.SrcBlend = D3D11_BLEND_ONE;
                 rt.DestBlend = D3D11_BLEND_ONE;
                 rt.BlendOp = D3D11_BLEND_OP_MAX;
+                rt.SrcBlendAlpha = D3D11_BLEND_ONE;
+                rt.DestBlendAlpha = D3D11_BLEND_ONE;
+                rt.BlendOpAlpha = D3D11_BLEND_OP_MAX;
+                rt.BlendEnable = true.into();
             }
             8 => { // Opaque: One, Zero
                 rt.SrcBlend = D3D11_BLEND_ONE;
                 rt.DestBlend = D3D11_BLEND_ZERO;
                 rt.BlendOp = D3D11_BLEND_OP_ADD;
+                rt.SrcBlendAlpha = D3D11_BLEND_ONE;
+                rt.DestBlendAlpha = D3D11_BLEND_ZERO;
+                rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+                rt.BlendEnable = false.into();
             }
             9 => { // Invert: InvDstColor, Zero
                 rt.SrcBlend = D3D11_BLEND_INV_DEST_COLOR;
                 rt.DestBlend = D3D11_BLEND_ZERO;
                 rt.BlendOp = D3D11_BLEND_OP_ADD;
+                rt.SrcBlendAlpha = D3D11_BLEND_INV_DEST_COLOR;
+                rt.DestBlendAlpha = D3D11_BLEND_ZERO;
+                rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+                rt.BlendEnable = true.into();
             }
             _ => unimplemented!("Custom blend mode {}", idx),
         }
@@ -458,6 +531,25 @@ impl ResourceManager {
 
     pub fn get_extra_desc(&self, id: u32) -> Option<&ExtraResourceDesc> {
         self.extra_reverse.get(&id)
+    }
+
+    // ---------- 纹理查询便利方法 ----------
+
+    /// 通过名称获取纹理，找不到则回退到 `_white`
+    pub fn get_texture_or_white(&self, name: &str) -> (u32, &Arc<TextureInfo>) {
+        let id = self.textures.get_id(name).unwrap_or(self.white_tex_id);
+        let tex = self.textures.get(id).unwrap();
+        (id, tex)
+    }
+
+    /// 通过 ID 获取纹理引用
+    pub fn get_texture_by_id(&self, id: u32) -> Option<&Arc<TextureInfo>> {
+        self.textures.get(id)
+    }
+
+    /// 通过 ID 获取纹理，找不到则回退到 `_white`
+    pub fn get_texture_by_id_or_white(&self, id: u32) -> &Arc<TextureInfo> {
+        self.textures.get(id).unwrap_or_else(|| self.textures.get(self.white_tex_id).unwrap())
     }
 
     // ---------- 绑定 Advanced 状态到上下文 ----------

@@ -38,6 +38,7 @@ pub use rstate::RStateBuilder;
 #[allow(unused)]
 pub mod resource_manager;
 pub use resource_manager::ResourceManager;
+pub use resource_manager::ResourcePool;
 #[allow(unused)]
 pub mod batch2d;
 pub use batch2d::Batch2D;

@@ -7,12 +7,15 @@ edition = "2024"
 anyhow = "1.0.103"
 bytemuck = "1.25.0"
 cosmic-text = "0.19.0"
-glam = "0.29"
+glam = { version = "0.29", features = ["serde"] }
 guillotiere = "0.7.0"
 image = "0.25.10"
 kira = "0.12.1"
 num_enum = "0.7.6"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_toml = "0.0.1"
 swash = "0.2.9"
+toml = "1.1.3"
 winit = "0.30.13"
 
 [build-dependencies]
@@ -25,3 +28,11 @@ windows = { version = "0.62.2", features = ["Win32_UI_WindowsAndMessaging", "Win
 [target.'cfg(target_os = "windows")'.build-dependencies]
 windows = { version = "0.62.2", features = ["Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_Direct3D"] }
 windows-core = "0.62.2"
+
+[[example]]
+name = "test-basic-app"
+path = "example/basic.rs"
+
+[[example]]
+name = "test-batch2d-basic"
+path = "example/batch2d/basic.rs"
